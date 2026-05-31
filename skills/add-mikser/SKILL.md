@@ -181,7 +181,7 @@ out
         "preview": "node node_modules/mikser-io/app.js --server"
     },
     "dependencies": {
-        "mikser-io": "^6.23.2",
+        "mikser-io": "^6.23.1",
         "mikser-io-plugin-schemas": "^0.1.0",
         "zod": "^3.23.0"
     }
@@ -191,8 +191,8 @@ out
 Notes on the choices:
 
 - **No `mikser-io-render-markdown`.** That plugin is a template-engine helper (it extends `runtime.markdown()` for hbs / eta / liquid renderers) — it does *not* convert document bodies to HTML before the API serves them. The API serves `doc.content` as raw markdown, and the SPA renders that to HTML client-side via `markdown-it`. (See the framework references — each one installs `markdown-it` as a peer dep and uses it in the view components.) If the user later moves to SSG output, the render-markdown plugin becomes relevant; for the live-SPA shape it's the wrong tool.
-- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. As of `mikser-io@6.23.2` the bin has a proper shebang and `"dev": "mikser --server --watch"` would also work — but invoking via `node` is portable across installed versions and survives any future PATH/permission quirks. Once the project is established the user can shorten this.
-- **`mikser-io ^6.23.2`** is the floor that includes the bin shebang fix. If you're targeting an older version, override the scripts to use `node node_modules/mikser-io/app.js`.
+- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. The bin works in the latest mikser-io but invoking via `node` is portable across installed versions and survives any future PATH/permission quirks. Once the project is established the user can shorten this if they want.
+- **`mikser-io ^6.23.1`** is the currently-published floor. The version's bin entry has a known shebang quirk — the `node node_modules/mikser-io/app.js` script form above sidesteps it entirely.
 
 ### `mikser-content/mikser.config.js`
 
