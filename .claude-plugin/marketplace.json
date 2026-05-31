@@ -1,0 +1,15 @@
+{
+    "name": "mikser-io",
+    "description": "Claude Code plugins for the mikser-io content engine — skills that bootstrap mikser-io into Vue, React, and SvelteKit projects.",
+    "owner": {
+        "name": "Almero Digital Marketing",
+        "url": "https://github.com/almero-digital-marketing"
+    },
+    "plugins": [
+        {
+            "name": "mikser-io-claude-plugin",
+            "source": "./",
+            "description": "Bootstrap a mikser-io content backend into Vue 3, React 18+/19, or SvelteKit projects — detects the framework (or scaffolds a fresh starter), wires the matching SDK, optionally lays down a starter content tree."
+        }
+    ]
+}

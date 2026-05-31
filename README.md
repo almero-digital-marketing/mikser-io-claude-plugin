@@ -14,17 +14,22 @@ More skills (multilingual routes, vector search wiring, schema design) will land
 
 ## Installing
 
-In Claude Code:
+In Claude Code, add this repo as a marketplace and install the plugin from it:
 
 ```
-/plugin add almero-digital-marketing/mikser-io-claude-plugin
+/plugin marketplace add almero-digital-marketing/mikser-io-claude-plugin
+/plugin install mikser-io-claude-plugin@mikser-io
 ```
+
+The first command registers the repo as a marketplace (named `mikser-io`); the second installs the `mikser-io-claude-plugin` plugin from it.
 
 Or for local development:
 
 ```bash
 git clone https://github.com/almero-digital-marketing/mikser-io-claude-plugin.git
-# then point Claude Code at the local path via /plugin or your settings.json
+# then add the local path as a marketplace:
+#   /plugin marketplace add ./mikser-io-claude-plugin
+#   /plugin install mikser-io-claude-plugin@mikser-io
 ```
 
 ## Using
