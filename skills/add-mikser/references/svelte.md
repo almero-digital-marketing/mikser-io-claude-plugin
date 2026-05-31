@@ -9,10 +9,10 @@ SvelteKit owns its own routing, so the integration shape is different from Vue/R
 Always:
 
 ```bash
-npm install mikser-io-sdk-svelte mikser-io-sdk-api
+npm install mikser-io-sdk-svelte mikser-io-sdk-api markdown-it
 ```
 
-Tell the user: "These two are the only new deps. The Svelte SDK is the framework wrapper (Svelte 5 runes); `sdk-api` is the underlying client. SvelteKit's router is what we'll feed into."
+Tell the user: "Three deps. `sdk-api` is the underlying entities client; `sdk-svelte` wraps it as Svelte 5 runes; `markdown-it` runs in the browser to convert each document's markdown body to HTML at render time. The mikser server delivers raw markdown over SSE — the conversion is intentionally client-side so the live-update loop stays simple."
 
 ## Files to write or edit
 
@@ -26,34 +26,40 @@ PUBLIC_MIKSER_URL=http://localhost:3001
 
 **Say:** "SvelteKit exposes `PUBLIC_*` env vars to the browser via `$env/static/public`. Change for staging/prod."
 
-### 2. `src/lib/mikser.js` — single client + helper exports
+### 2. `src/lib/mikser.js` — single shared entities client
 
 ```js
-// One mikser client per app, created in module scope so every page
-// that imports this module shares the same in-memory catalog and SSE
-// stream.
+// One mikser entities client per app. Exported so both client-side
+// runes (via the +layout.svelte registration step below) and build-time
+// hooks (entries() in +page.server.js) can use the same instance.
 import { createClient } from 'mikser-io-sdk-api'
-import { setMikserClient } from 'mikser-io-sdk-svelte'
 import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-export const client = createClient({ url: PUBLIC_MIKSER_URL })
-
-// Registers the client globally for the SDK's runes (useDocument,
-// useDocuments, useMikserPages, etc.) so they can find it without
-// prop-drilling.
-setMikserClient(client)
+// Two-step setup: createClient({ baseUrl }) returns a root client;
+// .entities('public') returns the per-endpoint client with the methods
+// the SDK actually calls — list, listAll, live, urlFor, render. The
+// endpoint name matches the key under `api.endpoints` in
+// mikser-content/mikser.config.js (`public`).
+export const client = createClient({ baseUrl: PUBLIC_MIKSER_URL }).entities('public')
 ```
 
-**Say:** "One client instance, shared. `setMikserClient` is the registration step — once it's done, any rune in `mikser-io-sdk-svelte` can find the client. Components import runes directly from the package; only build-time scripts need to import the `client` from here."
+**Say:** "One client instance, shared. Two-call setup: `baseUrl` for the root client, `.entities('public')` for the endpoint-specific entities client. Notice there's no `setMikserClient` call in this file — that has to happen inside a component because it uses Svelte's context API, which only works during component initialisation. We do it in `+layout.svelte` next."
 
-### 3. `src/routes/+layout.svelte` — boot the client
+### 3. `src/routes/+layout.svelte` — register the client in component context
+
+`setMikserClient` wraps Svelte's `setContext`, which only works during a component's initialisation — calling it at module scope (e.g. in `$lib/mikser.js`) throws `lifecycle_outside_component`. The root layout is the canonical place: it initialises once, before any page renders.
 
 If the file doesn't exist, create it:
 
 ```svelte
 <script>
-    // Import this so the module-level setMikserClient call runs on first load.
-    import '$lib/mikser.js'
+    import { client } from '$lib/mikser.js'
+    import { setMikserClient } from 'mikser-io-sdk-svelte'
+
+    // Registers the client in component context. Every rune below this
+    // layout (useDocument, useDocuments, useMikserPages, useSimilar)
+    // resolves the client from here.
+    setMikserClient(client)
 
     let { children } = $props()
 </script>
@@ -61,11 +67,42 @@ If the file doesn't exist, create it:
 {@render children()}
 ```
 
-If it already exists, add the `import '$lib/mikser.js'` line at the top of the existing `<script>` block — don't touch their layout markup.
+If it already exists, add the import and the `setMikserClient(client)` call to the top of the existing `<script>` block — don't touch the layout's markup.
 
-**Say:** "Importing `$lib/mikser.js` here is what makes the client exist before any page renders. The layout is yours otherwise — nav, footer, all that stays."
+**Say:** "This is the boot point. `setMikserClient(client)` puts the client into Svelte's component context, where the SDK's runes can find it. It has to live inside a component (not in `$lib/mikser.js`) because Svelte's context API only works during component init. Everything else in your layout is yours."
 
-### 4. `src/routes/[...slug]/+page.svelte` — catch-all renderer
+### 4. Delete the scaffolder's `src/routes/+page.svelte`
+
+`sv create --template minimal` lands a placeholder home page at `src/routes/+page.svelte`. The catch-all route you'll create next owns `/` (and every other URL), and at prerender time SvelteKit refuses to generate two pages for the same route — the build fails with `entries export generated entry /, which was matched by /`.
+
+Delete it:
+
+```bash
+rm src/routes/+page.svelte
+```
+
+If the user wants a hand-coded home page later, they can keep `+page.svelte` and instead filter `route === '/'` out of `entries()` (step 6) so the catch-all skips the home slug. The default recipe takes the simpler path: the home page is just another document.
+
+**Say:** "Delete the scaffold's home page — the catch-all will own `/`, and the markdown document `mikser-content/documents/index.md` (with `route: /`) is what actually renders there. If you later want a hand-coded home page, keep `+page.svelte` and filter `/` out of `entries()`."
+
+### 5. `src/lib/markdown.js` — shared markdown helper
+
+```js
+import MarkdownIt from 'markdown-it'
+
+// `html: true` lets authors drop inline HTML into their markdown when
+// they need to. `linkify: true` auto-links bare URLs. Configure here
+// and every view picks it up.
+const md = new MarkdownIt({ html: true, linkify: true, breaks: false })
+
+export function renderMarkdown(source) {
+    return md.render(source ?? '')
+}
+```
+
+**Say:** "One instance of markdown-it shared across every view. `doc.content` arrives as raw markdown over SSE; this is the only place that turns it into HTML."
+
+### 6. `src/routes/[...slug]/+page.svelte` — catch-all renderer
 
 The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any path that no other route handled.
 
@@ -81,10 +118,14 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
     // what the frontmatter writes (e.g. `route: /about`).
     const route = $derived('/' + (page.params.slug ?? ''))
 
-    // useDocuments takes a query getter and returns a live reactive
-    // object. SSE pushes from the backend re-render this component
-    // automatically — no refetch logic needed.
-    const result = useDocuments(() => ({ 'meta.route': route, 'meta.published': true }))
+    // useDocuments takes a query *getter*. The SDK destructures the
+    // result into { filter, sort, fields, limit, skip } — so the filter
+    // must live under a `filter` key. Passing the filter directly
+    // (without the wrapper) silently matches everything and the catch-
+    // all resolves to whichever document came back first, on every URL.
+    const result = useDocuments(() => ({
+        filter: { 'meta.route': route, 'meta.published': true },
+    }))
 
     const doc = $derived(result.documents[0] ?? null)
 
@@ -117,11 +158,13 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 </style>
 ```
 
-**Say:** "Catch-all. SvelteKit hits this for any URL not claimed by another route. `useDocuments({ 'meta.route': route })` is a live query — exactly one document matches, and we hand it to the view picked by `meta.layout`. Add a new layout = one entry in `viewForLayout` + one schema file."
+**Say:** "Catch-all. SvelteKit hits this for any URL not claimed by another route. The query shape `{ filter: {...} }` is the SDK contract — wrapping the filter is required (the test that surfaced this bug spent half an hour debugging a catch-all that resolved every URL to the same doc because the wrapper was missing). Add a new layout = one entry in `viewForLayout` + one schema file."
 
-### 5. `src/routes/[...slug]/+page.server.js` — prerender entries
+### 7. `src/routes/[...slug]/+page.server.js` — prerender entries (optional)
 
 `entries()` is a server-side hook, so it lives in `+page.server.js` (not `+page.js`). At build time SvelteKit calls it once to learn which URLs to prerender.
+
+**Default this to `prerender = false`.** With `prerender = true` the build calls `entries()`, which hits the live mikser backend — so `vite build` would fail with `ECONNREFUSED` unless the backend is already running. Defaulting to false means the user's first `npm run build` works without choreography; they can opt into prerender once their setup is solid.
 
 ```js
 import { generateMikserRoutes } from 'mikser-io-sdk-svelte'
@@ -129,7 +172,7 @@ import { client } from '$lib/mikser.js'
 
 // `entries()` tells SvelteKit which parameter values exist for this
 // dynamic route. We read them from mikser's catalog so the prerender
-// pipeline emits one HTML file per document.
+// pipeline can emit one HTML file per document.
 export const entries = async () => {
     const routes = await generateMikserRoutes({
         client,
@@ -138,24 +181,30 @@ export const entries = async () => {
     return routes
 }
 
-// Flip to false if you need a fully client-rendered app.
-export const prerender = true
+// Default to client-side render. Flip to `true` once you want a static
+// build — but note that `vite build` will then need the mikser backend
+// running so entries() can query it.
+export const prerender = false
 ```
 
-**Say:** "`entries()` is what makes the prerender pipeline know about your markdown files. At build time SvelteKit asks for the list and writes one HTML page per document. In dev this file is unused — the catch-all `+page.svelte` does the live lookup itself."
+**Say:** "`entries()` is what makes the prerender pipeline know about your markdown files — at build time it asks mikser for the list and writes one HTML page per document. We default `prerender = false` so the first build doesn't need the backend running. Flip to `true` for static HTML output (and start the backend before `vite build`)."
 
-### 6. `src/lib/views/PageView.svelte`
+### 8. `src/lib/views/PageView.svelte`
 
 ```svelte
 <script>
+    import { renderMarkdown } from '$lib/markdown.js'
     let { doc } = $props()
+
+    // $derived re-runs when doc.content changes. SSE updates flow
+    // through useDocuments → catch-all → this prop → derived html.
+    const html = $derived(renderMarkdown(doc.content))
 </script>
 
 <article class="page">
     <h1>{doc.meta.title}</h1>
-    <!-- doc.content is HTML from render-markdown. {@html ...} is the
-         Svelte equivalent of v-html / dangerouslySetInnerHTML. -->
-    {@html doc.content}
+    <!-- {@html ...} injects the markdown-it output. -->
+    {@html html}
 </article>
 
 <style>
@@ -163,13 +212,15 @@ export const prerender = true
 </style>
 ```
 
-**Say:** "Generic page view — your fallback. `doc` is live; SSE updates push here automatically because `useDoc` is reactive."
+**Say:** "Generic page view — your fallback. `doc` is live; SSE updates push here automatically and `$derived` re-converts the body."
 
-### 7. `src/lib/views/ArticleView.svelte`
+### 9. `src/lib/views/ArticleView.svelte`
 
 ```svelte
 <script>
+    import { renderMarkdown } from '$lib/markdown.js'
     let { doc } = $props()
+    const html = $derived(renderMarkdown(doc.content))
 </script>
 
 <article class="article">
@@ -182,7 +233,7 @@ export const prerender = true
             </time>
         </p>
     </header>
-    {@html doc.content}
+    {@html html}
 </article>
 
 <style>
@@ -193,7 +244,7 @@ export const prerender = true
 
 **Say:** "Layout-specific view. The article schema requires `author` and `date`, so this view can rely on them."
 
-### 8. `src/lib/views/NotFound.svelte`
+### 10. `src/lib/views/NotFound.svelte`
 
 ```svelte
 <section class="not-found">
@@ -208,9 +259,9 @@ export const prerender = true
 
 **Say:** "Fallback for unknown routes and unknown layouts."
 
-### 9. `svelte.config.js` — verify adapter
+### 11. `svelte.config.js` — verify adapter
 
-Don't replace the file. Check that an adapter is set; the default `@sveltejs/adapter-auto` works fine for prerender. If the project uses `adapter-static`, that's also fine — both honor `prerender = true`.
+Don't replace the file. Check that an adapter is set; the default `@sveltejs/adapter-auto` works fine. If the project uses `adapter-static`, that's also fine — both honor the prerender setting.
 
 If neither is present, install `@sveltejs/adapter-auto` and add it to `svelte.config.js`:
 
@@ -226,7 +277,7 @@ export default {
 }
 ```
 
-**Say:** "The adapter decides where your built site lands. `adapter-auto` picks based on your host; `adapter-static` gives a pure HTML folder. Either works with mikser's prerender."
+**Say:** "The adapter decides where your built site lands. `adapter-auto` picks based on your host; `adapter-static` gives a pure HTML folder."
 
 ## Notes about Svelte vs Vue/React shape
 

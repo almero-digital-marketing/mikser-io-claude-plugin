@@ -7,7 +7,7 @@ This reference is read by the `add-mikser` skill when `package.json` shows React
 Always:
 
 ```bash
-npm install mikser-io-sdk-react mikser-io-sdk-api
+npm install mikser-io-sdk-react mikser-io-sdk-api markdown-it
 ```
 
 If the user does **not** already have `react-router-dom`:
@@ -16,13 +16,15 @@ If the user does **not** already have `react-router-dom`:
 npm install react-router-dom
 ```
 
-Tell the user: "These three (or two) are the only new deps. The React SDK is the framework wrapper; `sdk-api` is the underlying client; `react-router-dom` is the standard router."
+Tell the user: "Four deps (or three if you already had react-router-dom). `sdk-api` is the entities client you create once and hand to the provider; `sdk-react` wraps it as React hooks; `react-router-dom` is standard; `markdown-it` runs in the browser to convert each document's markdown body to HTML at render time. The mikser server delivers raw markdown over SSE — the conversion is intentionally client-side so the live-update loop stays simple."
 
 ## Files to write or edit
 
 In order. Each step has a "say" line — the one-sentence explanation to give the user after the file is created/edited.
 
 ### 1. `.env`
+
+Create at the **project root** (next to `vite.config.js`, not under `src/`):
 
 ```
 VITE_MIKSER_URL=http://localhost:3001
@@ -100,26 +102,56 @@ export function mapRoute(doc) {
 
 **Say:** "This is the dispatch point. `meta.layout: 'article'` in a markdown file lands here and picks `ArticleView`. New layout = one entry here + one schema file."
 
-### 5. `src/views/PageView.jsx`
+### 5. `src/markdown.js`
+
+Shared markdown helper. One markdown-it instance, used by every view (and by anything the user adds later).
+
+```js
+import MarkdownIt from 'markdown-it'
+
+// `html: true` lets authors drop inline HTML into their markdown when
+// they need to. `linkify: true` auto-links bare URLs. Configure here
+// and every view picks it up.
+const md = new MarkdownIt({ html: true, linkify: true, breaks: false })
+
+export function renderMarkdown(source) {
+    return md.render(source ?? '')
+}
+```
+
+**Say:** "One instance of markdown-it shared across every view. Configure it here (footnotes, emoji, syntax highlighting via `highlight`, etc.) and every view picks the change up. `doc.content` arrives as raw markdown over SSE; this is the only place that turns it into HTML."
+
+### 6. `src/views/PageView.jsx`
 
 ```jsx
+import { useMemo } from 'react'
+import { renderMarkdown } from '../markdown.js'
+
 export default function PageView({ doc }) {
+    // useMemo re-runs when doc.content changes. SSE → mikser pushes a new
+    // doc → React re-renders this view → the memo recomputes the HTML.
+    const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
+
     return (
         <article className="page" style={{ maxWidth: '70ch', margin: '2rem auto', padding: '0 1rem' }}>
             <h1>{doc.meta.title}</h1>
-            {/* doc.content is the rendered HTML from render-markdown */}
-            <div dangerouslySetInnerHTML={{ __html: doc.content }} />
+            <div dangerouslySetInnerHTML={{ __html: html }} />
         </article>
     )
 }
 ```
 
-**Say:** "Generic page view — your fallback. The `doc` prop is the live document; edits in the markdown file push here automatically over SSE."
+**Say:** "Generic page view — your fallback. The `doc` prop is the live document; edits push here automatically over SSE and `useMemo` re-converts the body."
 
-### 6. `src/views/ArticleView.jsx`
+### 7. `src/views/ArticleView.jsx`
 
 ```jsx
+import { useMemo } from 'react'
+import { renderMarkdown } from '../markdown.js'
+
 export default function ArticleView({ doc }) {
+    const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
+
     return (
         <article className="article" style={{ maxWidth: '70ch', margin: '2rem auto', padding: '0 1rem' }}>
             <header>
@@ -131,7 +163,7 @@ export default function ArticleView({ doc }) {
                     </time>
                 </p>
             </header>
-            <div dangerouslySetInnerHTML={{ __html: doc.content }} />
+            <div dangerouslySetInnerHTML={{ __html: html }} />
         </article>
     )
 }
@@ -139,7 +171,7 @@ export default function ArticleView({ doc }) {
 
 **Say:** "Layout-specific view. The article schema requires `author` and `date`, so this view can rely on them."
 
-### 7. `src/views/NotFound.jsx`
+### 8. `src/views/NotFound.jsx`
 
 ```jsx
 export default function NotFound() {
@@ -154,9 +186,11 @@ export default function NotFound() {
 
 **Say:** "Fallback for unknown routes. Also returned from `mapRoute` when a document's `layout` isn't in the dispatch table."
 
-### 8. `src/main.jsx`
+### 9. `src/main.jsx`
 
 There are two variants. Pick based on the answer to question 2 in the workflow.
+
+In both variants, preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
 #### Variant A — user has no existing router
 
@@ -166,10 +200,15 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { createClient } from 'mikser-io-sdk-api'
 import { MikserProvider } from 'mikser-io-sdk-react'
+import './index.css'
 import App from './App.jsx'
 
-// One entities client per app — caches, dedups, manages SSE.
-const client = createClient({ url: import.meta.env.VITE_MIKSER_URL })
+// `baseUrl` is required (the SDK throws on import otherwise).
+// `.entities('public')` returns the per-endpoint entities client the
+// React hooks actually use — list, listAll, live, urlFor, render. The
+// endpoint name matches the key under `api.endpoints` in
+// mikser-content/mikser.config.js (`public`).
+const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -191,9 +230,10 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from 'mikser-io-sdk-api'
 import { MikserProvider } from 'mikser-io-sdk-react'
+import './index.css'
 import App from './App.jsx'  // their existing tree, with its router inside
 
-const client = createClient({ url: import.meta.env.VITE_MIKSER_URL })
+const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -204,13 +244,15 @@ createRoot(document.getElementById('root')).render(
 )
 ```
 
-**Say (both variants):** "`createClient` from `sdk-api` is the underlying entities client (one per app — caches, dedups, runs the SSE stream). `MikserProvider` is the React context that holds it. Anything below it can call `useMikserRoutes`, `useDocument`, `useSimilar`, etc. It does not own the router — your router stays yours."
+**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the React hooks actually use (list / live / urlFor / render). `MikserProvider` is the React context that holds it. Anything below it can call `useMikserRoutes`, `useDocument`, `useSimilar`, etc. It does not own the router — your router stays yours."
 
-### 9. `src/App.jsx`
+### 10. `src/App.jsx`
 
-The integration point — where `useMikserRoutes` lives. This file is the same regardless of variant; what differs is whether the router lives here or upstream.
+The integration point — where `useMikserRoutes` lives. For Branch B (blank-project scaffold), **overwrite the scaffolder's stock `App.jsx`** with the Variant A code below. The Vite React template's default `App.jsx` renders the Vite demo page (logos + counter) and won't display any mikser route. Leaving it in place would mean the wiring "works" but the user sees the Vite demo, with no error to debug.
 
-#### If you scaffolded the router in main.jsx (Variant A):
+You can also delete `src/App.css` and `src/assets/` if you want to scrub the demo — the styles target the demo page only.
+
+#### Variant A (Branch B scaffold, or any case where you also scaffolded the router in main.jsx):
 
 ```jsx
 import { useRoutes } from 'react-router-dom'

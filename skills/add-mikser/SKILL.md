@@ -41,9 +41,19 @@ Once they pick, **scaffold using the official tooling** (don't hand-roll a start
 | ---------- | ------- |
 | Vue 3      | `npm create vite@latest . -- --template vue` |
 | React      | `npm create vite@latest . -- --template react` |
-| SvelteKit  | `npx sv create .`  (accept the defaults; minimal template is fine) |
+| SvelteKit  | `npx -y sv create . --template minimal --no-add-ons --no-types --install npm` |
 
 The `.` argument tells the scaffolder to create files in the current directory rather than a new subdir. Some scaffolders refuse if the directory isn't empty — if that happens, ask the user how they want to proceed (move existing files? pick a subdirectory name? cancel?).
+
+The SvelteKit command above uses explicit flags because `npx sv create .` without flags is interactive — it hangs in any non-TTY shell. The minimal template is the right starting point for adding mikser; the user can layer Tailwind, Prettier, etc. afterwards.
+
+After scaffolding, **treat the scaffolder's stock entry component as part of the scaffold, not as user code** — you will overwrite it as part of the mikser wiring. The frameworks ship:
+
+- Vue: `src/App.vue` rendering `<HelloWorld />`. Replace with `<RouterView />`.
+- React: `src/App.jsx` rendering the Vite demo page. Replace with the mikser route table.
+- SvelteKit: `src/routes/+page.svelte` (the demo home page). Delete it — the catch-all route owns `/`.
+
+If you leave the stock entry in place, the wiring "works" but the user sees the scaffold demo instead of any mikser content, with no error to debug. The framework references call this out at the relevant step; mention it again here so the user isn't surprised.
 
 After scaffolding completes, run `npm install` (or the user's preferred package manager — check for `pnpm-lock.yaml` / `yarn.lock` / `bun.lockb` first, fall back to npm). Then continue with the workflow as if it had been an existing project: the framework is now identified, no router exists yet (so default to "scaffold one" for Vue/React), and SvelteKit owns its own.
 
@@ -166,29 +176,39 @@ out
     "version": "0.0.0",
     "type": "module",
     "scripts": {
-        "dev": "mikser --server --watch",
-        "build": "mikser --clear",
-        "preview": "mikser --server"
+        "dev": "node node_modules/mikser-io/app.js --server --watch",
+        "build": "node node_modules/mikser-io/app.js --clear",
+        "preview": "node node_modules/mikser-io/app.js --server"
     },
     "dependencies": {
-        "mikser-io": "^6.23.0",
+        "mikser-io": "^6.23.2",
         "mikser-io-plugin-schemas": "^0.1.0",
-        "mikser-io-render-markdown": "^1.0.0",
         "zod": "^3.23.0"
     }
 }
 ```
 
+Notes on the choices:
+
+- **No `mikser-io-render-markdown`.** That plugin is a template-engine helper (it extends `runtime.markdown()` for hbs / eta / liquid renderers) — it does *not* convert document bodies to HTML before the API serves them. The API serves `doc.content` as raw markdown, and the SPA renders that to HTML client-side via `markdown-it`. (See the framework references — each one installs `markdown-it` as a peer dep and uses it in the view components.) If the user later moves to SSG output, the render-markdown plugin becomes relevant; for the live-SPA shape it's the wrong tool.
+- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. As of `mikser-io@6.23.2` the bin has a proper shebang and `"dev": "mikser --server --watch"` would also work — but invoking via `node` is portable across installed versions and survives any future PATH/permission quirks. Once the project is established the user can shorten this.
+- **`mikser-io ^6.23.2`** is the floor that includes the bin shebang fix. If you're targeting an older version, override the scripts to use `node node_modules/mikser-io/app.js`.
+
 ### `mikser-content/mikser.config.js`
 
 ```js
 // Mikser backend config. The plugins list is the active surface:
-//   documents     — load .md files under documents/
-//   front-matter  — parse YAML front-matter into meta
-//   yaml          — load .yml files (if you add any)
+//   documents      — load .md files under documents/
+//   front-matter   — parse YAML front-matter into meta
+//   yaml           — load .yml files (if you add any)
 //   plugin-schemas — validate front-matter against schemas/<layout>.js
-//   render-markdown — convert markdown body to HTML
-//   api           — expose the catalog over HTTP with an SSE subscribe stream
+//   api            — expose the catalog over HTTP with an SSE subscribe stream
+//
+// Note: there's intentionally no render-markdown plugin here. The api
+// plugin serves doc.content as raw markdown; the frontend converts it
+// to HTML on the client via markdown-it. If you later move to SSG output
+// (HTML files on disk), add 'render-markdown' here along with a renderer
+// plugin like 'render-hbs' or 'render-eta'.
 //
 // Add more plugins as your project grows; the engine is unchanged.
 export default {
@@ -197,7 +217,6 @@ export default {
         'front-matter',
         'yaml',
         'plugin-schemas',
-        'render-markdown',
         'api',
     ],
 
@@ -282,8 +301,8 @@ published: true
 ---
 
 This is a second page document. The router added a `/about` route
-because this file's `meta.route` was matched by `useMikserRoutes`.
-Delete this file and watch the route disappear without a rebuild.
+because this file's `meta.route` is `/about`. Delete this file and
+watch the route disappear from the running app without a rebuild.
 ```
 
 ### `mikser-content/documents/articles/welcome.md`
@@ -299,9 +318,10 @@ summary: First article — a tour of what gets generated when you scaffold mikse
 published: true
 ---
 
-This document has `meta.layout: article`, so the router dispatches it
-to `ArticleView` instead of `PageView`. The dispatch is in
-`src/route-mapping.<ext>` — add a new layout there and a new schema
+This document has `meta.layout: article`, so the route renders
+`ArticleView` instead of `PageView`. The dispatch lives in
+`src/route-mapping.<ext>` (Vue / React) or in the catch-all
+`+page.svelte` (SvelteKit) — add a new layout there and a new schema
 file in `mikser-content/schemas/` and you have a new content type.
 
 The pattern is the same whether you have two layouts or fifty.
