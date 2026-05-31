@@ -24,6 +24,25 @@ Framework support per architecture:
 
 Each cell maps to a canonical example shipped in the matching SDK's `examples/` directory. The recipes are extracted inline so you can read them in the skill without leaving Claude Code.
 
+## Live updates
+
+Every architecture the skill scaffolds includes live SSE support — just applied at different surfaces:
+
+| Architecture | Live surface | What edits push to |
+| --- | --- | --- |
+| **Pure SPA** | The whole app | Edit a `.md` file → SSE → views re-render. Every page updates without refresh. |
+| **Hybrid SSG** | Editor only (`/admin/`); public side is static | Editor views update live; public visitors get the rebuilt HTML on next deploy. |
+| **Islands** | Per-island; only islands that use `useDocuments` / `useDocument` | Search island stays in sync as docs land; the surrounding mikser-rendered HTML is static (rebuild to update). Pure-client islands (e.g. a cart counter) aren't tied to mikser. |
+
+The mechanism is identical across all three: `mikser-content`'s `api` plugin exposes a `/subscribe` SSE endpoint, [`mikser-io-sdk-api`](https://github.com/almero-digital-marketing/mikser-io-sdk-api)'s `client.live()` subscribes to it, and the framework SDKs (`useDocument` / `useDocuments` / `useMikserRoutes` / `useMikserStatus`) wrap that into reactive primitives. Even the connection guard ("Can't reach mikser backend") is live — if the backend comes back up while the page is open, the next probe sees it and the guard clears.
+
+What is **not** live in any architecture:
+
+- **Hybrid SSG public-side routes** — those come from a build-time manifest. New documents need a rebuild + redeploy to appear on the public site. The editor sees them immediately via SSE.
+- **Schema validation results** — schemas validate on `mikser-content`'s side at document load time. The browser sees an updated `entities.d.ts` only after a TypeScript reload (Vite usually picks it up via HMR).
+
+If you want a particular surface to be live and it isn't by default, that's almost always doable by leaning harder on the SDK's `live()` primitive. The architectures are starting points, not constraints.
+
 More skills (multilingual routes, vector search wiring, schema design) will land here over time.
 
 ## Installing
