@@ -252,37 +252,20 @@ App.jsx does two jobs: render the matched route via `useRoutes`, and surface a c
 #### Variant A (Branch B scaffold, or any case where you also scaffolded the router in main.jsx):
 
 ```jsx
-import { useEffect, useState } from 'react'
 import { useRoutes } from 'react-router-dom'
-import { useMikserRoutes } from 'mikser-io-sdk-react'
+import { useMikserRoutes, useMikserStatus } from 'mikser-io-sdk-react'
 import { mapRoute } from './route-mapping.jsx'
 import NotFound from './views/NotFound.jsx'
 
 export default function App({ mikserUrl }) {
-    // 'connecting' → fetch probe in flight or unresolved
-    // 'ready'      → probe succeeded; render the routes
-    // 'unreachable'→ probe failed or 5s deadline expired; show error panel
-    const [status, setStatus] = useState('connecting')
+    // useMikserStatus probes the backend once via client.list({ limit: 1 })
+    // and returns 'connecting' | 'ready' | 'unreachable'. Settles to one
+    // of the terminal states within ~1s on success or 5s on failure.
+    // Override timeoutMs if 5s isn't right for your network.
+    const status = useMikserStatus()
 
-    useEffect(() => {
-        const abort = new AbortController()
-        // Lightweight probe — we only need to know the backend exists.
-        // We don't consume the body; ok status is enough to flip to ready.
-        // If the probe fails (network error, DNS, etc.), or if 5s elapses
-        // without resolution, we surface an unreachable state.
-        fetch(`${mikserUrl}/api/public/entities?limit=1`, { signal: abort.signal })
-            .then(
-                res => setStatus(res.ok ? 'ready' : 'unreachable'),
-                () => setStatus('unreachable'),
-            )
-        const timeoutId = setTimeout(() => {
-            setStatus(prev => prev === 'connecting' ? 'unreachable' : prev)
-        }, 5000)
-        return () => { abort.abort(); clearTimeout(timeoutId) }
-    }, [mikserUrl])
-
-    // useMikserRoutes still subscribes; once the SSE batch lands, the
-    // routes array updates and useRoutes re-renders the matched view.
+    // useMikserRoutes subscribes regardless. Once the SSE batch lands,
+    // its returned routes array re-renders the matched view.
     const routes = useMikserRoutes({
         mapRoute,
         staticRoutes: [

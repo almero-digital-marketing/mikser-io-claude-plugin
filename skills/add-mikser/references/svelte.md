@@ -55,39 +55,26 @@ If the file doesn't exist, create it:
 
 ```svelte
 <script>
-    import { onMount } from 'svelte'
     import { client } from '$lib/mikser.js'
-    import { setMikserClient } from 'mikser-io-sdk-svelte'
+    import { setMikserClient, useMikserStatus } from 'mikser-io-sdk-svelte'
     import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
     // Registers the client in component context. Every rune below this
     // layout resolves the client from here.
     setMikserClient(client)
 
+    // useMikserStatus probes the backend once and returns a reactive
+    // holder. status.current settles to 'ready' on success or
+    // 'unreachable' on failure / 5s deadline. Override timeoutMs if 5s
+    // isn't right for your network.
+    const status = useMikserStatus()
+
     let { children } = $props()
-
-    // 'connecting' → probe in flight or unresolved
-    // 'ready'      → backend reachable; render children
-    // 'unreachable'→ probe failed or 5s deadline expired
-    let status = $state('connecting')
-
-    onMount(() => {
-        const abort = new AbortController()
-        fetch(`${PUBLIC_MIKSER_URL}/api/public/entities?limit=1`, { signal: abort.signal })
-            .then(
-                res => status = res.ok ? 'ready' : 'unreachable',
-                () => status = 'unreachable',
-            )
-        const timeoutId = setTimeout(() => {
-            if (status === 'connecting') status = 'unreachable'
-        }, 5000)
-        return () => { abort.abort(); clearTimeout(timeoutId) }
-    })
 </script>
 
-{#if status === 'ready'}
+{#if status.current === 'ready'}
     {@render children()}
-{:else if status === 'connecting'}
+{:else if status.current === 'connecting'}
     <main class="mikser-state mikser-connecting">
         <p>Connecting to mikser at <code>{PUBLIC_MIKSER_URL}</code>…</p>
     </main>
