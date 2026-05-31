@@ -188,9 +188,9 @@ export default function NotFound() {
 
 ### 9. `src/main.jsx`
 
-There are two variants. Pick based on the answer to question 2 in the workflow.
+The pattern: render React immediately, mount `MikserProvider` so hooks have a client, and pass the mikser URL down so the connection guard in App.jsx can show a real error if the backend is unreachable. **There is no `await seeded` here** — React renders right away and App.jsx tracks connection state. A forever-loading page with no error is a brutal failure mode; this prevents it.
 
-In both variants, preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
+Preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
 #### Variant A — user has no existing router
 
@@ -203,18 +203,14 @@ import { MikserProvider } from 'mikser-io-sdk-react'
 import './index.css'
 import App from './App.jsx'
 
-// `baseUrl` is required (the SDK throws on import otherwise).
-// `.entities('public')` returns the per-endpoint entities client the
-// React hooks actually use — list, listAll, live, urlFor, render. The
-// endpoint name matches the key under `api.endpoints` in
-// mikser-content/mikser.config.js (`public`).
-const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+const client = createClient({ baseUrl: mikserUrl }).entities('public')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <MikserProvider client={client}>
             <BrowserRouter>
-                <App />
+                <App mikserUrl={mikserUrl} />
             </BrowserRouter>
         </MikserProvider>
     </React.StrictMode>,
@@ -222,8 +218,6 @@ createRoot(document.getElementById('root')).render(
 ```
 
 #### Variant B — user has an existing router
-
-Leave their router as-is. Wrap their entry tree in `<MikserProvider>` only:
 
 ```jsx
 import React from 'react'
@@ -233,18 +227,19 @@ import { MikserProvider } from 'mikser-io-sdk-react'
 import './index.css'
 import App from './App.jsx'  // their existing tree, with its router inside
 
-const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+const client = createClient({ baseUrl: mikserUrl }).entities('public')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <MikserProvider client={client}>
-            <App />
+            <App mikserUrl={mikserUrl} />
         </MikserProvider>
     </React.StrictMode>,
 )
 ```
 
-**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the React hooks actually use (list / live / urlFor / render). `MikserProvider` is the React context that holds it. Anything below it can call `useMikserRoutes`, `useDocument`, `useSimilar`, etc. It does not own the router — your router stays yours."
+**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the React hooks actually use. `MikserProvider` holds it for hooks beneath. The `mikserUrl` prop drops the URL into App.jsx so the connection guard there can show it in error messages."
 
 ### 10. `src/App.jsx`
 
@@ -252,20 +247,42 @@ The integration point — where `useMikserRoutes` lives. For Branch B (blank-pro
 
 You can also delete `src/App.css` and `src/assets/` if you want to scrub the demo — the styles target the demo page only.
 
+App.jsx does two jobs: render the matched route via `useRoutes`, and surface a connection panel while the mikser backend is reachable but slow, or an error panel after the deadline expires.
+
 #### Variant A (Branch B scaffold, or any case where you also scaffolded the router in main.jsx):
 
 ```jsx
+import { useEffect, useState } from 'react'
 import { useRoutes } from 'react-router-dom'
 import { useMikserRoutes } from 'mikser-io-sdk-react'
 import { mapRoute } from './route-mapping.jsx'
 import NotFound from './views/NotFound.jsx'
 
-export default function App() {
-    // The hook builds a live route table: your static routes first,
-    // then mikser's content routes (one per matching document), then
-    // the catch-all 404. Pass everything in; you get one array back.
-    // Re-renders on every SSE update — add/remove a markdown file and
-    // the routes follow.
+export default function App({ mikserUrl }) {
+    // 'connecting' → fetch probe in flight or unresolved
+    // 'ready'      → probe succeeded; render the routes
+    // 'unreachable'→ probe failed or 5s deadline expired; show error panel
+    const [status, setStatus] = useState('connecting')
+
+    useEffect(() => {
+        const abort = new AbortController()
+        // Lightweight probe — we only need to know the backend exists.
+        // We don't consume the body; ok status is enough to flip to ready.
+        // If the probe fails (network error, DNS, etc.), or if 5s elapses
+        // without resolution, we surface an unreachable state.
+        fetch(`${mikserUrl}/api/public/entities?limit=1`, { signal: abort.signal })
+            .then(
+                res => setStatus(res.ok ? 'ready' : 'unreachable'),
+                () => setStatus('unreachable'),
+            )
+        const timeoutId = setTimeout(() => {
+            setStatus(prev => prev === 'connecting' ? 'unreachable' : prev)
+        }, 5000)
+        return () => { abort.abort(); clearTimeout(timeoutId) }
+    }, [mikserUrl])
+
+    // useMikserRoutes still subscribes; once the SSE batch lands, the
+    // routes array updates and useRoutes re-renders the matched view.
     const routes = useMikserRoutes({
         mapRoute,
         staticRoutes: [
@@ -273,14 +290,54 @@ export default function App() {
         ],
         notFoundElement: <NotFound />,
     })
+    const element = useRoutes(routes)
 
-    return useRoutes(routes)
+    if (status === 'ready') return element
+    if (status === 'connecting') return <ConnectingPanel url={mikserUrl} />
+    return <ErrorPanel url={mikserUrl} />
+}
+
+function ConnectingPanel({ url }) {
+    return (
+        <main style={panelStyle}>
+            <p>Connecting to mikser at <code>{url}</code>…</p>
+        </main>
+    )
+}
+
+function ErrorPanel({ url }) {
+    return (
+        <main style={{ ...panelStyle, color: '#222' }}>
+            <h2 style={{ color: '#b94a48', marginTop: 0 }}>Can't reach the mikser backend</h2>
+            <p>Tried <code>{url}</code> for 5 seconds. Start it in another terminal:</p>
+            <pre style={preStyle}>{`cd mikser-content
+npm run dev`}</pre>
+            <p>Then reload this page.</p>
+        </main>
+    )
+}
+
+const panelStyle = {
+    maxWidth: '60ch',
+    margin: '4rem auto',
+    padding: '0 1rem',
+    font: '14px/1.5 system-ui, -apple-system, sans-serif',
+    color: '#666',
+}
+const preStyle = {
+    background: '#f5f5f5',
+    padding: '1rem',
+    borderRadius: '4px',
+    overflowX: 'auto',
 }
 ```
 
 #### If the user has an existing App.jsx:
 
-**Don't overwrite it.** Tell them: "Your `App.jsx` already exists. To wire mikser into it, replace your `useRoutes(routes)` call with:
+**Don't overwrite it.** Tell them: "Your `App.jsx` already exists. Two changes:
+
+1. Accept `mikserUrl` as a prop (passed from main.jsx) and wrap your existing `useRoutes` in the same connection-status guard so the page never hangs silently when mikser is down.
+2. Replace your `useRoutes(routes)` call with the mikser-augmented version:
 
 ```jsx
 import { useMikserRoutes } from 'mikser-io-sdk-react'
@@ -295,9 +352,9 @@ const routes = useMikserRoutes({
 return useRoutes(routes)
 ```
 
-The hook merges your static routes with the live content routes and re-renders on every SSE update."
+If you have non-mikser routes you want navigable even when mikser is unreachable, skip the `status === 'connecting'` gate and only show the error panel when `status === 'unreachable'`."
 
-**Say (Variant A):** "`useMikserRoutes` builds the full route table for you — static routes first (yours), then content routes (mikser's), then the 404. To add static routes like `/login`, slot them into `staticRoutes`."
+**Say:** "App.jsx does the dispatch (`useMikserRoutes` + `useRoutes`) and hosts the connection guard. The fetch probe + 5s deadline ensures a missing or unreachable backend produces a clear error message instead of a forever-loading screen. The error panel tells the user exactly how to fix it — start the backend, reload."
 
 ## Skip list
 

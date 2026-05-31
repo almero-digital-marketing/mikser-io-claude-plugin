@@ -45,31 +45,73 @@ export const client = createClient({ baseUrl: PUBLIC_MIKSER_URL }).entities('pub
 
 **Say:** "One client instance, shared. Two-call setup: `baseUrl` for the root client, `.entities('public')` for the endpoint-specific entities client. Notice there's no `setMikserClient` call in this file — that has to happen inside a component because it uses Svelte's context API, which only works during component initialisation. We do it in `+layout.svelte` next."
 
-### 3. `src/routes/+layout.svelte` — register the client in component context
+### 3. `src/routes/+layout.svelte` — register the client + connection guard
 
 `setMikserClient` wraps Svelte's `setContext`, which only works during a component's initialisation — calling it at module scope (e.g. in `$lib/mikser.js`) throws `lifecycle_outside_component`. The root layout is the canonical place: it initialises once, before any page renders.
+
+The layout also hosts the connection guard. A small fetch probe (with a 5-second deadline) decides whether to render the page tree, a "connecting…" panel, or an "unreachable" error. Without this guard, a missing mikser backend produces a forever-loading page with no error surface — a brutal failure mode for someone just trying the recipe.
 
 If the file doesn't exist, create it:
 
 ```svelte
 <script>
+    import { onMount } from 'svelte'
     import { client } from '$lib/mikser.js'
     import { setMikserClient } from 'mikser-io-sdk-svelte'
+    import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
     // Registers the client in component context. Every rune below this
-    // layout (useDocument, useDocuments, useMikserPages, useSimilar)
-    // resolves the client from here.
+    // layout resolves the client from here.
     setMikserClient(client)
 
     let { children } = $props()
+
+    // 'connecting' → probe in flight or unresolved
+    // 'ready'      → backend reachable; render children
+    // 'unreachable'→ probe failed or 5s deadline expired
+    let status = $state('connecting')
+
+    onMount(() => {
+        const abort = new AbortController()
+        fetch(`${PUBLIC_MIKSER_URL}/api/public/entities?limit=1`, { signal: abort.signal })
+            .then(
+                res => status = res.ok ? 'ready' : 'unreachable',
+                () => status = 'unreachable',
+            )
+        const timeoutId = setTimeout(() => {
+            if (status === 'connecting') status = 'unreachable'
+        }, 5000)
+        return () => { abort.abort(); clearTimeout(timeoutId) }
+    })
 </script>
 
-{@render children()}
+{#if status === 'ready'}
+    {@render children()}
+{:else if status === 'connecting'}
+    <main class="mikser-state mikser-connecting">
+        <p>Connecting to mikser at <code>{PUBLIC_MIKSER_URL}</code>…</p>
+    </main>
+{:else}
+    <main class="mikser-state mikser-error">
+        <h2>Can't reach the mikser backend</h2>
+        <p>Tried <code>{PUBLIC_MIKSER_URL}</code> for 5 seconds. Start it in another terminal:</p>
+        <pre>cd mikser-content
+npm run dev</pre>
+        <p>Then reload this page.</p>
+    </main>
+{/if}
+
+<style>
+    .mikser-state { max-width: 60ch; margin: 4rem auto; padding: 0 1rem; font: 14px/1.5 system-ui, sans-serif; }
+    .mikser-connecting { color: #666; }
+    .mikser-error h2 { color: #b94a48; margin-top: 0; }
+    .mikser-error pre { background: #f5f5f5; padding: 1rem; border-radius: 4px; }
+</style>
 ```
 
-If it already exists, add the import and the `setMikserClient(client)` call to the top of the existing `<script>` block — don't touch the layout's markup.
+If `+layout.svelte` already exists, add the import + `setMikserClient(client)` call to the top of the script block AND wrap the existing layout markup in the same `{#if status === 'ready'}` guard. If the user has non-mikser pages (login, marketing, etc.) that should remain navigable when mikser is down, narrow the guard: only show the error panel inside the routes that actually depend on mikser, or skip the `'connecting'` gate entirely and only branch on `'unreachable'`.
 
-**Say:** "This is the boot point. `setMikserClient(client)` puts the client into Svelte's component context, where the SDK's runes can find it. It has to live inside a component (not in `$lib/mikser.js`) because Svelte's context API only works during component init. Everything else in your layout is yours."
+**Say:** "Two jobs in one layout: register the client and host the connection guard. The fetch probe + 5s deadline turns a missing backend into a clear error instead of a forever-loading screen. The error message tells the user exactly how to fix it — start the backend, reload."
 
 ### 4. Delete the scaffolder's `src/routes/+page.svelte`
 

@@ -210,10 +210,12 @@ const html = computed(() => renderMarkdown(props.doc.content))
 
 There are two variants. Pick based on the answer to question 2 in the workflow.
 
+The pattern across both: mount Vue immediately and expose a reactive `mikserStatus` ref so the app can show "connecting" / "ready" / "unreachable" states. **Do not `await seeded` before mount.** If the backend is down, `seeded` never resolves and the user sees the index.html loading shell forever with no error — a brutal failure mode. With the deadline-and-status pattern below, a missing backend produces a clear in-app error within 5 seconds.
+
 #### Variant A — user has no existing router
 
 ```js
-import { createApp } from 'vue'
+import { createApp, ref } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createClient } from 'mikser-io-sdk-api'
 import { createMikserPlugin, useMikserRoutes } from 'mikser-io-sdk-vue'
@@ -223,17 +225,20 @@ import App from './App.vue'
 
 const app = createApp(App)
 
-// 1. The root client (`baseUrl` is required — pass the mikser server origin).
-//    `.entities('public')` returns the per-endpoint entities client that
-//    has the methods the SDK actually uses: list, listAll, live, urlFor,
-//    render, update, delete. The endpoint name matches the key under
-//    `api.endpoints` in mikser-content/mikser.config.js (`public`).
-const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
+// 1. The root client (`baseUrl` is required). `.entities('public')` returns
+//    the per-endpoint entities client with the methods the SDK uses
+//    (list, listAll, live, urlFor, render, update, delete). The endpoint
+//    name matches the key under `api.endpoints` in
+//    mikser-content/mikser.config.js (`public`).
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+const client = createClient({ baseUrl: mikserUrl }).entities('public')
 
-// 2. Hand the entities client to the Vue plugin so composables can inject it.
 app.use(createMikserPlugin({ client }))
 
-// 3. Router with only a 404 fallback. mikser will inject the rest.
+// 2. Router with only a 404 fallback. Mikser will inject the rest at
+//    runtime — but routes appear *after* the first SSE batch, not
+//    synchronously. Variant A handles that with the connection guard
+//    in App.vue below.
 const router = createRouter({
     history: createWebHistory(),
     routes: [
@@ -242,19 +247,43 @@ const router = createRouter({
 })
 app.use(router)
 
-// 4. Hand the router to mikser. Returns { dispose, seeded }.
-//    `seeded` resolves after the first SSE batch — await it so the user
-//    lands on a real route, not the 404 fallback.
+// 3. Start subscribing to mikser. `seeded` resolves on the first SSE
+//    batch — but we don't await it. App.vue gates RouterView on the
+//    reactive status ref below.
 const { seeded } = useMikserRoutes(router, { mapRoute })
-await seeded
 
+// 4. Connection status — provided into the app so App.vue can render
+//    "connecting" / "ready" / "unreachable" states instead of hanging.
+const mikserStatus = ref('connecting')
+
+const TIMEOUT_MS = 5000
+const timeout = new Promise(resolve =>
+    setTimeout(() => resolve('timeout'), TIMEOUT_MS),
+)
+
+Promise.race([seeded.then(() => 'ready'), timeout]).then(result => {
+    if (result === 'ready') {
+        mikserStatus.value = 'ready'
+        // Re-resolve the current URL so vue-router picks up the route
+        // that was just added by useMikserRoutes.
+        router.replace(router.currentRoute.value.fullPath)
+    } else {
+        mikserStatus.value = 'unreachable'
+    }
+})
+
+app.provide('mikserStatus', mikserStatus)
+app.provide('mikserUrl', mikserUrl)
+
+// 5. Mount immediately. App.vue shows a loading panel or error panel
+//    based on mikserStatus until routes are ready.
 app.mount('#app')
 ```
 
 #### Variant B — user has an existing router
 
 ```js
-import { createApp } from 'vue'
+import { createApp, ref } from 'vue'
 import { createClient } from 'mikser-io-sdk-api'
 import { createMikserPlugin, useMikserRoutes } from 'mikser-io-sdk-vue'
 import { mapRoute } from './route-mapping.js'
@@ -263,44 +292,121 @@ import App from './App.vue'
 
 const app = createApp(App)
 
-const client = createClient({ baseUrl: import.meta.env.VITE_MIKSER_URL }).entities('public')
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+const client = createClient({ baseUrl: mikserUrl }).entities('public')
 app.use(createMikserPlugin({ client }))
 app.use(router)
 
-// Augment the existing router. Their hand-written routes still work;
-// mikser's routes slot in alongside. `dispose` removes them again if
-// you ever need to (e.g. HMR cleanup).
 const { seeded } = useMikserRoutes(router, { mapRoute })
-await seeded
 
+const mikserStatus = ref('connecting')
+const TIMEOUT_MS = 5000
+const timeout = new Promise(resolve =>
+    setTimeout(() => resolve('timeout'), TIMEOUT_MS),
+)
+Promise.race([seeded.then(() => 'ready'), timeout]).then(result => {
+    if (result === 'ready') {
+        mikserStatus.value = 'ready'
+        router.replace(router.currentRoute.value.fullPath)
+    } else {
+        mikserStatus.value = 'unreachable'
+    }
+})
+
+app.provide('mikserStatus', mikserStatus)
+app.provide('mikserUrl', mikserUrl)
+
+// In Variant B the user's existing routes work immediately because
+// they're already registered. Mikser routes appear after seeded resolves.
+// The connection guard in App.vue still surfaces an error if the
+// backend is unreachable, but the existing routes remain navigable.
 app.mount('#app')
 ```
 
-**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the SDK actually uses (list / live / urlFor / render). `createMikserPlugin({ client })` registers that with Vue's DI so composables find it. `useMikserRoutes(router, { mapRoute })` adds a route for every document `mapRoute` returns. The router is yours — mikser augments it without owning it. `await seeded` blocks mount until the catalog has loaded, so first paint is real content, not a flash of 404."
+**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the SDK actually uses. `createMikserPlugin({ client })` registers that with Vue's DI. `useMikserRoutes(router, { mapRoute })` adds a route for every document `mapRoute` returns. Crucially, we **mount immediately** and surface a reactive `mikserStatus` ref so the app can render its own connecting/error states. Forever-loading screens with no error message are a terrible failure mode — the deadline-vs-seeded race gives the user a clear signal within 5 seconds if the backend is unreachable."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
 ### 10. `src/App.vue`
 
-This is the integration point — where mikser-driven routes actually render. Behaviour depends on whether the user came in with their own app or whether the workflow scaffolded a fresh one:
+This is the integration point — where mikser-driven routes actually render. It also hosts the connection guard that surfaces backend-unreachable errors instead of hanging.
 
 **Branch B (blank-project scaffold) — overwrite the scaffolder's App.vue.**
 
-`create-vite --template vue` always lands an `App.vue` that renders `<HelloWorld />` and imports a logo. Leaving it in place would mount the Vite demo instead of any mikser route — the wiring "works" but the user sees nothing change. Replace it with:
+`create-vite --template vue` always lands an `App.vue` that renders `<HelloWorld />` and imports a logo. Leaving it in place would mount the Vite demo instead of any mikser route. Replace it with:
 
 ```vue
+<script setup>
+import { inject } from 'vue'
+
+const status = inject('mikserStatus')   // ref: 'connecting' | 'ready' | 'unreachable'
+const url = inject('mikserUrl')
+</script>
+
 <template>
-    <RouterView />
+    <!-- 'ready' — routes are registered, render whatever the URL matched. -->
+    <RouterView v-if="status === 'ready'" />
+
+    <!-- 'connecting' — initial state. Replaced as soon as the first SSE
+         batch lands, or by the 'unreachable' state after the deadline. -->
+    <main v-else-if="status === 'connecting'" class="mikser-state mikser-connecting">
+        <p>Connecting to mikser at <code>{{ url }}</code>…</p>
+    </main>
+
+    <!-- 'unreachable' — backend didn't respond in time. Show the user how
+         to fix it instead of hanging. -->
+    <main v-else class="mikser-state mikser-error">
+        <h2>Can't reach the mikser backend</h2>
+        <p>Tried <code>{{ url }}</code> for 5 seconds. Start it in another terminal:</p>
+        <pre>cd mikser-content
+npm run dev</pre>
+        <p>Then reload this page.</p>
+    </main>
+</template>
+
+<style scoped>
+.mikser-state {
+    max-width: 60ch;
+    margin: 4rem auto;
+    padding: 0 1rem;
+    font: 14px/1.5 system-ui, -apple-system, sans-serif;
+}
+.mikser-connecting { color: #666; }
+.mikser-error h2 { color: #b94a48; margin-top: 0; }
+.mikser-error pre {
+    background: #f5f5f5;
+    padding: 1rem;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+</style>
+```
+
+You can also delete `src/components/HelloWorld.vue` and `src/assets/` if you want to scrub the demo.
+
+**Say (Branch B):** "App.vue does two jobs: render the matched route via `<RouterView />`, and surface a connection panel while the SSE seed is pending or after it times out. The injected `mikserStatus` ref drives the three states. Style it to match your project — but keep the three branches so backend issues never produce a silent forever-loading screen."
+
+**Branch A (existing project) — don't overwrite, but add the guard markup.**
+
+If `App.vue` already exists with content, do **not** overwrite it — say to the user: "Your `App.vue` already exists. Add the connection-status check around your `<RouterView />` so a missing mikser backend doesn't hang the page indefinitely. The minimal version is:
+
+```vue
+<script setup>
+import { inject } from 'vue'
+const status = inject('mikserStatus')
+const url = inject('mikserUrl')
+</script>
+
+<template>
+    <!-- Your existing shell (nav, header, etc.) -->
+    <RouterView v-if="status !== 'unreachable'" />
+    <main v-else class="mikser-error">
+        Can't reach mikser at {{ url }}. Start it with `cd mikser-content && npm run dev`.
+    </main>
 </template>
 ```
 
-You can also delete `src/components/HelloWorld.vue` and `src/assets/` if you want to scrub the demo. The scaffolder's `src/style.css` and `src/main.js`-level `import './style.css'` are optional to keep — the styles target the demo page only.
-
-**Say (Branch B):** "Replacing the scaffold's `App.vue` is required — the stock version renders `<HelloWorld />` and won't display any mikser route. Build your shell (nav, footer, layout) around `<RouterView />` when you're ready."
-
-**Branch A (existing project) — don't touch it, but ensure `<RouterView />` is present.**
-
-If `App.vue` already exists with content, do **not** overwrite it — say to the user: "Your `App.vue` already exists. Make sure it includes `<RouterView />` somewhere in its template — that's where mikser-driven pages render. If you only need a tiny shell, the file above is a reasonable starting point."
+If you don't have an existing router and rely on mikser routes only, gate `<RouterView />` on `status === 'ready'` so it shows a 'connecting' state first. If you have other routes, leave `<RouterView />` always rendered — the user can still navigate your routes even while mikser is connecting."
 
 ## Skip list
 
