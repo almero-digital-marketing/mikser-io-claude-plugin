@@ -1,6 +1,23 @@
 ---
 name: add-mikser
-description: Bootstrap a mikser-io content backend into a Vue 3, React 18+/19, or SvelteKit project — works for an existing app or a blank directory, and supports three architectures — Pure SPA (runtime everything, live everywhere), Hybrid SSG (prerendered public site + SPA editor), and Islands (mikser-rendered HTML + framework islands for interactivity). Use whenever the user mentions adding mikser, mikser-io, file-based CMS, or a live content backend — also when they describe wanting their content to live as `.md` / `.yml` files with hot-reload to the browser, multilingual URLs, live previews, SEO-friendly static output, SSG with a live editor, or sprinkling interactivity into mostly-static pages. Also trigger when the user says "try mikser" or "start from scratch" in an empty folder, or when they ask about Astro/Eleventy-style islands or hybrid SSG+SPA setups. Detects the framework from package.json (or scaffolds a fresh one with create-vite / sv create when there's nothing yet), asks the user to pick the architecture, then wires the matching SDK pattern and optionally scaffolds a sibling `mikser-content/` folder with schemas and starter documents.
+description: >-
+  Bootstrap a mikser-io content backend into a Vue 3, React 18+/19, or
+  SvelteKit project — works for an existing app or a blank directory, and
+  supports three architectures — Pure SPA (runtime everything, live
+  everywhere), Hybrid SSG (prerendered public site + SPA editor), and
+  Islands (mikser-rendered HTML + framework islands for interactivity).
+  Use whenever the user mentions adding mikser, mikser-io, file-based CMS,
+  or a live content backend — also when they describe wanting their
+  content to live as `.md` / `.yml` files with hot-reload to the browser,
+  multilingual URLs, live previews, SEO-friendly static output, SSG with
+  a live editor, or sprinkling interactivity into mostly-static pages.
+  Also trigger when the user says "try mikser" or "start from scratch" in
+  an empty folder, or when they ask about Astro/Eleventy-style islands or
+  hybrid SSG+SPA setups. Detects the framework from package.json (or
+  scaffolds a fresh one with create-vite / sv create when there's nothing
+  yet), asks the user to pick the architecture, then wires the matching
+  SDK pattern and optionally scaffolds a sibling `mikser-content/` folder
+  with schemas and starter documents.
 ---
 
 # add-mikser
