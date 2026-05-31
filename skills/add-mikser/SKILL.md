@@ -1,6 +1,6 @@
 ---
 name: add-mikser
-description: Bootstrap a mikser-io content backend into a Vue 3, React 18+/19, or SvelteKit project — works for an existing app or a blank directory. Use whenever the user mentions adding mikser, mikser-io, file-based CMS, or a live content backend — also when they describe wanting their content to live as `.md` / `.yml` files with hot-reload to the browser, multilingual URLs, or live previews. Also use when the user says they want to "start from scratch" or "try mikser" in an empty folder. Detects the framework from package.json (or scaffolds a fresh one with create-vite / sv create when there's nothing yet), wires the SDK in their main file, and optionally scaffolds a sibling `mikser-content/` folder with schemas and starter documents so the backend works on first run.
+description: Bootstrap a mikser-io content backend into a Vue 3, React 18+/19, or SvelteKit project — works for an existing app or a blank directory, and supports three architectures: Pure SPA (runtime everything, live everywhere), Hybrid SSG (prerendered public site + SPA editor), and Islands (mikser-rendered HTML + framework islands for interactivity). Use whenever the user mentions adding mikser, mikser-io, file-based CMS, or a live content backend — also when they describe wanting their content to live as `.md` / `.yml` files with hot-reload to the browser, multilingual URLs, live previews, SEO-friendly static output, SSG with a live editor, or sprinkling interactivity into mostly-static pages. Also trigger when the user says "try mikser" or "start from scratch" in an empty folder, or when they ask about Astro/Eleventy-style islands or hybrid SSG+SPA setups. Detects the framework from package.json (or scaffolds a fresh one with create-vite / sv create when there's nothing yet), asks the user to pick the architecture, then wires the matching SDK pattern and optionally scaffolds a sibling `mikser-content/` folder with schemas and starter documents.
 ---
 
 # add-mikser
@@ -59,22 +59,44 @@ After scaffolding completes, run `npm install` (or the user's preferred package 
 
 Tell the user briefly what just landed: "Scaffolded a Vue 3 + Vite starter. Now adding mikser." — keep it short, they can see the file tree.
 
-### 2. Read the framework reference
+### 2. Pick the architecture
 
-Based on the framework detected, **read** the matching file:
+The skill supports three architectures. Ask the user which one fits — explain the trade-offs in one line each before they pick:
 
-- Vue → `references/vue.md`
-- React → `references/react.md`
-- SvelteKit → `references/svelte.md`
+| Architecture | When to use | Trade-off |
+| --- | --- | --- |
+| **Pure SPA** *(default)* | Fastest to set up. Live SSE updates everywhere. Dashboards, editors, anything internal where SEO doesn't matter. | Public HTML is empty until JS loads — bad SEO. Initial boot pays one round-trip to mikser. |
+| **Hybrid SSG** | Public marketing site with a separate editor preview. SEO matters, but you also want live edit-and-see-it for the editorial team. | Two build steps and two entry points. Slightly more wiring. |
+| **Islands** | Content-heavy sites where most pages are pure content (mikser renders them) but a few features need interactivity (search, contact form, live counts). | Mikser-side templating (hbs/eta) for the shell — content authors mostly stay in markdown but layout HTML is templated. |
 
-Each reference is the full bootstrap recipe for that framework — file lists, file contents, wiring steps, the loading-shell HTML, the build-target bump. They're written so the body that follows in this SKILL.md works the same regardless of which framework — the references differ only in how the SDK is wired.
+Default to **Pure SPA** if the user doesn't have a clear preference — it's the fastest path to "this works on my machine."
 
-### 3. Ask the questions
+For the question phrasing:
 
-Up to three questions, in this order. Skip any whose answer is already determined by what you found in step 1. Confirm before generating anything:
+> Mikser supports three architectures:
+>
+> 1. **Pure SPA** (default) — runtime everything, live SSE, single Vite dev server. Fastest to set up.
+> 2. **Hybrid SSG** — prerendered public site + SPA editor with live previews. Best for marketing sites with an editorial team.
+> 3. **Islands** — mikser-rendered HTML + framework islands. Best for content-heavy sites with a sprinkle of interactivity.
+>
+> Which fits? (Press enter for Pure SPA.)
+
+### 3. Read the framework × architecture reference
+
+Once you know both axes, **read** the matching file:
+
+- `references/spa/{vue,react,svelte}.md` — Pure SPA, all three frameworks supported
+- `references/hybrid/{vue,react,svelte}.md` — Hybrid SSG; Vue is the canonical example; React and Svelte are stubs
+- `references/islands/{vue,react,svelte}.md` — Islands; Vue is the canonical example; React and Svelte are stubs
+
+The references for stubs explain what state the pattern is in and offer to fall back to Pure SPA. Don't write framework-specific Hybrid/Islands recipes from scratch — if the user picks a stub combination, walk them through the options honestly (use Pure SPA for now, or contribute an example upstream).
+
+### 4. Ask the remaining questions
+
+Up to three more questions. Skip any whose answer is already determined by what you found in step 1 or 2. Confirm before generating anything:
 
 1. **Mikser server URL** — default `http://localhost:3001`. Used for `VITE_MIKSER_URL` / `PUBLIC_MIKSER_URL` env wiring.
-2. **Existing router?** — only ask for Vue and React, and only when the user came in with `vue-router` / `react-router-dom` already in their deps. Default to "yes, integrate into the existing router." For a blank-project scaffold (Branch B) or an existing project that doesn't have a router yet, skip this question — there's nothing to integrate into, so you'll scaffold one. For SvelteKit this is always moot.
+2. **Existing router?** — only ask for Vue and React in the Pure SPA architecture, and only when the user came in with `vue-router` / `react-router-dom` already in their deps. Default to "yes, integrate into the existing router." For a blank-project scaffold (Branch B), an existing project without a router, SvelteKit (always), or the Hybrid SSG / Islands architectures (which prescribe their own router shape), skip this question.
 3. **Scaffold a `mikser-content/` sibling folder?** — default yes. The user needs a content backend to talk to; without one, the integration has nothing to show. Scaffolding it in 30 seconds versus pointing them at the mikser-io README is the difference between "this works" and "this still doesn't work."
 
 Phrasing example:
@@ -87,21 +109,17 @@ Phrasing example:
 >
 > Answer with whatever you'd change, or just say "go" to take all defaults.
 
-### 4. Generate the frontend wiring
+### 5. Generate the frontend wiring
 
-Follow the framework reference for the exact file edits and creations. The general shape across all three:
+Follow the architecture × framework reference for the exact file edits and creations. The general shape varies per architecture — each reference spells out what it needs. Some patterns are common:
 
-- **Install peer deps**: `mikser-io-sdk-<framework>` + `mikser-io-sdk-api`. For Vue/React without an existing router, also the router package.
-- **Edit main file** (`src/main.js`, `src/main.jsx`, or `src/routes/+layout.svelte`): wire `createClient` + the framework plugin + the live router helper. Use `await seeded` before mount.
-- **Edit Vite config**: set `build.target: 'es2022'` so the top-level `await` survives `vite build`. (Skip for SvelteKit — its config handles this differently.)
-- **Edit `index.html`**: add a loading shell inside `#app` so the user doesn't see a blank screen during the initial SSE seed.
-- **Generate route-mapping**: a small module mapping `meta.layout` to view components.
-- **Generate sample view components**: `PageView`, `ArticleView`, `NotFound` minimum.
+- **Install peer deps**: `mikser-io-sdk-<framework>` + `mikser-io-sdk-api`, plus architecture-specific extras (markdown-it for SPA views, render template engines for Islands, etc).
 - **Add `.env` line**: `VITE_MIKSER_URL` (or `PUBLIC_MIKSER_URL` for SvelteKit) pointing at the mikser server.
+- **Read the reference top to bottom and apply every numbered step.** Don't skip the "Say" annotations — they're how the user learns what they own.
 
 After each meaningful file, explain in one short line what it does and how to customize it. The user is going to own these files; the skill is teaching them what they own.
 
-### 5. Generate `mikser-content/` (if the user said yes)
+### 6. Generate `mikser-content/` (if the user said yes)
 
 Always scaffold the same minimal shape, regardless of framework:
 
@@ -122,7 +140,7 @@ mikser-content/
 
 The exact contents are in the **shared content templates** section below. They're framework-agnostic; the same starter content works for Vue, React, and SvelteKit consumers.
 
-### 6. Tell the user how to run it
+### 7. Tell the user how to run it
 
 Final message — be explicit about the two-terminal pattern:
 
