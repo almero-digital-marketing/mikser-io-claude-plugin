@@ -1,0 +1,22 @@
+{
+    "name": "mikser-io-claude-plugin",
+    "description": "Claude Code skills for bootstrapping mikser-io content backends into Vue, React, and SvelteKit projects.",
+    "version": "0.1.0",
+    "author": {
+        "name": "Almero Digital Marketing",
+        "url": "https://github.com/almero-digital-marketing"
+    },
+    "homepage": "https://github.com/almero-digital-marketing/mikser-io-claude-plugin",
+    "repository": "https://github.com/almero-digital-marketing/mikser-io-claude-plugin",
+    "license": "MIT",
+    "keywords": [
+        "mikser",
+        "mikser-io",
+        "claude-code",
+        "skill",
+        "vue",
+        "react",
+        "svelte",
+        "sveltekit"
+    ]
+}
