@@ -240,7 +240,7 @@ app.use(router)
 // Subscribe to mikser routes. Routes appear after the first SSE batch.
 // We don't await `seeded` — App.vue gates RouterView on useMikserStatus
 // (called inside the App component) so the page never hangs silently.
-const { seeded } = useMikserRoutes(router, { mapRoute })
+const { seeded } = useMikserRoutes(router, { client, mapRoute })
 
 // Re-resolve the current URL after the SDK has populated routes, so
 // the just-added route renders without flicker.
@@ -267,14 +267,14 @@ const app = createApp(App)
 app.use(createMikserPlugin({ client }))
 app.use(router)
 
-const { seeded } = useMikserRoutes(router, { mapRoute })
+const { seeded } = useMikserRoutes(router, { client, mapRoute })
 seeded.then(() => router.replace(router.currentRoute.value.fullPath))
 
 app.provide('mikserUrl', mikserUrl)
 app.mount('#app')
 ```
 
-**Say (both variants):** "Two-call client setup: `createClient({ baseUrl })` → root client; `.entities('public')` → the entities client the SDK uses. `createMikserPlugin({ client })` registers it for composables. `useMikserRoutes(router, { mapRoute })` adds a route per document. We mount immediately — App.vue uses the SDK's `useMikserStatus` composable to decide whether to render `<RouterView />`, a connecting panel, or an unreachable error. No more await-seeded-before-mount, no more forever-loading screens."
+**Say (both variants):** "Two-call client setup: `createClient({ baseUrl })` → root client; `.entities('public')` → the entities client the SDK uses. `createMikserPlugin({ client })` registers it for composables called *inside components* (where Vue's `inject()` works). At module scope here in `main.js` we're outside any component setup context — so we pass `client` explicitly to `useMikserRoutes(router, { client, mapRoute })`. Inside `App.vue`'s `<script setup>` we don't need to: `useMikserStatus()` injects the client via the plugin. We mount immediately — App.vue uses `useMikserStatus` to decide whether to render `<RouterView />`, a connecting panel, or an unreachable error. No more await-seeded-before-mount, no more forever-loading screens."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
