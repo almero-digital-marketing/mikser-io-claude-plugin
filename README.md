@@ -19,10 +19,10 @@ Framework support per architecture:
 | | Vue 3 | React 18+/19 | SvelteKit |
 | --- | --- | --- | --- |
 | Pure SPA | ✓ | ✓ | ✓ |
-| Hybrid SSG | ✓ canonical | stub (port the Vue recipe) | stub (per-route prerender) |
-| Islands | ✓ canonical | stub (port the Vue recipe) | stub (port the Vue recipe) |
+| Hybrid SSG | ✓ (vite-ssg) | ✓ (manifest SPA) | ✓ (per-route prerender) |
+| Islands | ✓ | ✓ | ✓ (plain Svelte 5, no SvelteKit) |
 
-The stubs are honest about the state of the world — they explain the pattern, point at the Vue version as the structural template, and offer to scaffold a faithful port. They don't pretend to be canonical SDK examples (yet).
+Each cell maps to a canonical example shipped in the matching SDK's `examples/` directory. The recipes are extracted inline so you can read them in the skill without leaving Claude Code.
 
 More skills (multilingual routes, vector search wiring, schema design) will land here over time.
 

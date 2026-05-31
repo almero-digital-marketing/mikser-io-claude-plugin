@@ -85,11 +85,11 @@ For the question phrasing:
 
 Once you know both axes, **read** the matching file:
 
-- `references/spa/{vue,react,svelte}.md` — Pure SPA, all three frameworks supported
-- `references/hybrid/{vue,react,svelte}.md` — Hybrid SSG; Vue is the canonical example; React and Svelte are stubs
-- `references/islands/{vue,react,svelte}.md` — Islands; Vue is the canonical example; React and Svelte are stubs
+- `references/spa/{vue,react,svelte}.md` — Pure SPA, all three frameworks
+- `references/hybrid/{vue,react,svelte}.md` — Hybrid SSG, all three frameworks
+- `references/islands/{vue,react,svelte}.md` — Islands, all three frameworks (Svelte uses plain Svelte 5, not SvelteKit)
 
-The references for stubs explain what state the pattern is in and offer to fall back to Pure SPA. Don't write framework-specific Hybrid/Islands recipes from scratch — if the user picks a stub combination, walk them through the options honestly (use Pure SPA for now, or contribute an example upstream).
+Each reference is a full bootstrap recipe — file lists, file contents, wiring steps, deployment notes. They mirror the canonical upstream examples shipped in each SDK's `examples/` directory.
 
 ### 4. Ask the remaining questions
 
