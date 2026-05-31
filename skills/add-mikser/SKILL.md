@@ -1,6 +1,6 @@
 ---
 name: add-mikser
-description: Bootstrap a mikser-io content backend into an existing Vue 3, React 18+/19+, or SvelteKit project. Use whenever the user mentions adding mikser, mikser-io, file-based CMS, or a live content backend to their app — also when they describe wanting their content to live as `.md` / `.yml` files with hot-reload to the browser, multilingual URLs, or live previews. Detects the framework from package.json, wires the SDK in their main file, and optionally scaffolds a sibling `mikser-content/` folder with schemas and a couple of starter documents so the backend works on first run.
+description: Bootstrap a mikser-io content backend into a Vue 3, React 18+/19, or SvelteKit project — works for an existing app or a blank directory. Use whenever the user mentions adding mikser, mikser-io, file-based CMS, or a live content backend — also when they describe wanting their content to live as `.md` / `.yml` files with hot-reload to the browser, multilingual URLs, or live previews. Also use when the user says they want to "start from scratch" or "try mikser" in an empty folder. Detects the framework from package.json (or scaffolds a fresh one with create-vite / sv create when there's nothing yet), wires the SDK in their main file, and optionally scaffolds a sibling `mikser-content/` folder with schemas and starter documents so the backend works on first run.
 ---
 
 # add-mikser
@@ -13,7 +13,11 @@ Run these steps in order. Don't skip discovery — the wiring depends on what's 
 
 ### 1. Discover the project
 
-Read `package.json` from the current working directory (or wherever the user is rooted). Establish:
+First, check whether the user has a project here at all. List the current directory and look for `package.json`.
+
+**Branch A — `package.json` exists (existing project):**
+
+Read it and establish:
 
 - **Framework**: Vue, React, or SvelteKit. Detect from `dependencies` / `devDependencies`:
   - `vue` (3.x) + `@vitejs/plugin-vue` → Vue
@@ -24,6 +28,26 @@ Read `package.json` from the current working directory (or wherever the user is 
 - **Bundler**: assume Vite (default for all three framework SDKs).
 
 If the framework can't be confidently identified, ask the user. Don't guess.
+
+**Branch B — no `package.json` (blank directory):**
+
+The user is starting from scratch. Tell them so and offer the three frameworks:
+
+> Nothing here yet — looks like a fresh start. Which framework do you want to use? (Vue 3 + Vite, React + Vite, or SvelteKit). I'll scaffold the official starter, then layer mikser on top.
+
+Once they pick, **scaffold using the official tooling** (don't hand-roll a starter — use what the framework maintainers ship):
+
+| Framework  | Command |
+| ---------- | ------- |
+| Vue 3      | `npm create vite@latest . -- --template vue` |
+| React      | `npm create vite@latest . -- --template react` |
+| SvelteKit  | `npx sv create .`  (accept the defaults; minimal template is fine) |
+
+The `.` argument tells the scaffolder to create files in the current directory rather than a new subdir. Some scaffolders refuse if the directory isn't empty — if that happens, ask the user how they want to proceed (move existing files? pick a subdirectory name? cancel?).
+
+After scaffolding completes, run `npm install` (or the user's preferred package manager — check for `pnpm-lock.yaml` / `yarn.lock` / `bun.lockb` first, fall back to npm). Then continue with the workflow as if it had been an existing project: the framework is now identified, no router exists yet (so default to "scaffold one" for Vue/React), and SvelteKit owns its own.
+
+Tell the user briefly what just landed: "Scaffolded a Vue 3 + Vite starter. Now adding mikser." — keep it short, they can see the file tree.
 
 ### 2. Read the framework reference
 
@@ -37,10 +61,10 @@ Each reference is the full bootstrap recipe for that framework — file lists, f
 
 ### 3. Ask the questions
 
-Three questions, in this order. Confirm before generating anything:
+Up to three questions, in this order. Skip any whose answer is already determined by what you found in step 1. Confirm before generating anything:
 
 1. **Mikser server URL** — default `http://localhost:3001`. Used for `VITE_MIKSER_URL` / `PUBLIC_MIKSER_URL` env wiring.
-2. **Existing router?** — only ask for Vue and React. If the user has `vue-router` or `react-router-dom` already installed, default to "yes, integrate into the existing router." Otherwise default to "no, scaffold one." For SvelteKit, this is moot — SvelteKit owns routing.
+2. **Existing router?** — only ask for Vue and React, and only when the user came in with `vue-router` / `react-router-dom` already in their deps. Default to "yes, integrate into the existing router." For a blank-project scaffold (Branch B) or an existing project that doesn't have a router yet, skip this question — there's nothing to integrate into, so you'll scaffold one. For SvelteKit this is always moot.
 3. **Scaffold a `mikser-content/` sibling folder?** — default yes. The user needs a content backend to talk to; without one, the integration has nothing to show. Scaffolding it in 30 seconds versus pointing them at the mikser-io README is the difference between "this works" and "this still doesn't work."
 
 Phrasing example:
