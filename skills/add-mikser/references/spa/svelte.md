@@ -214,7 +214,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 </style>
 ```
 
-**Say:** "Two-step lookup: query the sitemap for `meta.route` OR a matching `destination`, then fetch the full document from public by id. The sitemap client has the static snapshot — the first paint reads it without an API roundtrip. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
+**Say:** "Two-step lookup: query the sitemap for `meta.route` OR a matching `destination`, then fetch the full document from public by id. With server-side `cache: true` and a reverse proxy in front, the SDK's GET to the sitemap reads live mikser when up and the cached file when down — transparent failover. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
 
 ### 7. `src/routes/[...slug]/+page.server.js` — prerender entries (optional)
 

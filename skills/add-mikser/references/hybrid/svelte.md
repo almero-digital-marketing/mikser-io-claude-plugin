@@ -102,7 +102,7 @@ export const documents = root.entities('public')
 export const sitemap = root.entities('sitemap')
 ```
 
-**Say:** "Two clients, shared between contexts. `documents` is the full-content client (catch-all's `load()`, admin's `useDocument`). `sitemap` is the narrow router client — small payload, plus a static snapshot for zero-roundtrip admin boot. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
+**Say:** "Two clients, shared between contexts. `documents` is the full-content client (catch-all's `load()`, admin's `useDocument`). `sitemap` is the narrow router client — small payload. With server-side `cache: true` and a reverse proxy in front, the admin SPA's list calls fail over to disk-cached responses when mikser is down. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
 
 ### 5. `src/lib/route-mapping.js` — shared view dispatch
 

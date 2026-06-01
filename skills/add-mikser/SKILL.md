@@ -281,15 +281,13 @@ export default {
             // Sitemap endpoint — the router's source of truth. Filter
             // by meta.component so only SPA-routed documents appear.
             //
-            // `cache: true` (mikser-io ^6.24.0) writes the default GET
-            // response to <out>/api/sitemap/entities.json on every
-            // catalog change. Two consumers:
-            //   - SDK initialUrl reads it directly for zero-roundtrip
-            //     first paint
-            //   - reverse proxy serves it as static fallback when the
-            //     live mikser API is down — your frontend keeps working
-            //     through outages (list reads only; SSE is necessarily
-            //     live-only)
+            // `cache: true` (mikser-io ^6.25.1) writes every GET
+            // /entities response to disk, keyed by the request URL's
+            // query string. The reverse proxy fails over to the cached
+            // file when mikser is down — same URL, transparent to the
+            // SDK. List reads survive outages; SSE is necessarily
+            // live-only. See plugins.md "Per-query disk cache" in the
+            // mikser-io docs for the nginx config.
             sitemap: {
                 query: e =>
                     e.type === 'document' &&

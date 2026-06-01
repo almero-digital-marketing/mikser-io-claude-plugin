@@ -227,7 +227,7 @@ The pattern: render React immediately, mount `MikserProvider` so hooks have a cl
 
 Preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
-Two clients now: `documents` (public endpoint, used by `useDocument` inside views) and `sitemap` (narrow endpoint, with the static snapshot for fast first paint, passed to `useMikserRoutes` in App).
+Two clients now: `documents` (public endpoint, used by `useDocument` inside views) and `sitemap` (narrow endpoint with `cache: true` on the server side — every GET response written to disk so a reverse proxy can fail over to the cache when mikser is down). The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it.
 
 #### Variant A — user has no existing router
 
@@ -280,7 +280,7 @@ createRoot(document.getElementById('root')).render(
 )
 ```
 
-**Say (both variants):** "Two clients now: `documents` (public endpoint, full content fetch — used by `useDocument` inside views) and `sitemap` (narrow endpoint, with the static snapshot at `/data/sitemap.json` for zero-roundtrip first paint). `MikserProvider` registers documents for hooks beneath. The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it. The sitemap's `meta.component` filter is the load-bearing convention: only documents with a component end up as routes."
+**Say (both variants):** "Two clients now: `documents` (public endpoint, full content fetch — used by `useDocument` inside views) and `sitemap` (narrow endpoint with server-side `cache: true` — every GET response written to disk so a reverse proxy can fail over to the cache when mikser is down). `MikserProvider` registers documents for hooks beneath. The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it. The sitemap's `meta.component` filter is the load-bearing convention: only documents with a component end up as routes."
 
 ### 10. `src/App.jsx`
 

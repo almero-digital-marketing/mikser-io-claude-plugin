@@ -265,9 +265,10 @@ const root = createClient({ baseUrl: mikserUrl })
 // Two clients, two purposes:
 //   - documents  → full content fetch from the `public` endpoint
 //                  (used by useDocument inside views)
-//   - sitemap    → narrow router data from the `sitemap` endpoint,
-//                  with a static snapshot at /data/sitemap.json for
-//                  zero-roundtrip first paint
+//   - sitemap    → narrow router data from the `sitemap` endpoint.
+//                  Server-side `cache: true` writes every GET response
+//                  to disk; a reverse proxy can fail over to the cache
+//                  when mikser is down — transparent to the SDK.
 const documents = root.entities('public')
 const sitemap = root.entities('sitemap')
 
@@ -282,9 +283,10 @@ const router = createRouter({
 })
 app.use(router)
 
-// Hand the sitemap client to useMikserRoutes — it produces routes
-// directly from the static snapshot on first paint (no API roundtrip),
-// then keeps the route list in sync via SSE on the sitemap endpoint.
+// Hand the sitemap client to useMikserRoutes. The SDK's list() uses
+// GET so the response is whatever the proxy serves (live mikser when
+// up, cached file when down); routes populate on first response and
+// stay in sync via SSE on the sitemap endpoint.
 const { seeded } = useMikserRoutes(router, { client: sitemap, mapRoute })
 
 // Re-resolve the current URL after the SDK has populated routes, so
@@ -321,7 +323,7 @@ app.provide('mikserUrl', mikserUrl)
 app.mount('#app')
 ```
 
-**Say (both variants):** "Two clients now: `documents` (public endpoint, full content for `useDocument`) and `sitemap` (narrow endpoint, with a static snapshot at `/data/sitemap.json` for zero-roundtrip first paint). `createMikserPlugin({ client: documents })` registers the document client for composables inside components. `useMikserRoutes(router, { client: sitemap, mapRoute })` uses the sitemap client — routes appear immediately from the snapshot, then SSE keeps them in sync. The sitemap's filter (`meta.component`) is the load-bearing convention: only documents with a component end up as routes."
+**Say (both variants):** "Two clients now: `documents` (public endpoint, full content for `useDocument`) and `sitemap` (narrow endpoint, `cache: true` server-side so a reverse proxy can fail over to the cached file when mikser is down). `createMikserPlugin({ client: documents })` registers the document client for composables. `useMikserRoutes(router, { client: sitemap, mapRoute })` uses the sitemap client — SDK uses GET so the response comes from live mikser when up, cache when down, transparent. The sitemap's filter (`meta.component`) is the load-bearing convention: only documents with a component end up as routes."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
