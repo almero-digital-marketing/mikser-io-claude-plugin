@@ -36,12 +36,14 @@ Every architecture the skill scaffolds includes live SSE support — just applie
 
 The mechanism is identical across all three: `mikser-content`'s `api` plugin exposes a `/subscribe` SSE endpoint, [`mikser-io-sdk-api`](https://github.com/almero-digital-marketing/mikser-io-sdk-api)'s `client.live()` subscribes to it, and the framework SDKs (`useDocument` / `useDocuments` / `useMikserRoutes` / `useMikserStatus`) wrap that into reactive primitives. Even the connection guard ("Can't reach mikser backend") is live — if the backend comes back up while the page is open, the next probe sees it and the guard clears.
 
-**Static cache for fast first paint + outage resilience.** The api plugin's `cache: true` option (mikser-io ^6.24.0) writes the default response of an endpoint to `out/<basePath>/<endpoint>/entities.json` on every catalog change. Two consumers benefit:
+**Per-query disk cache + outage resilience.** The api plugin's `cache: true` option (mikser-io ^6.25.1) writes every GET `/entities?...` response to disk, keyed by the request URL's raw query string:
 
-1. The SDK's `entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })` reads it directly for zero-roundtrip first paint — list data is in memory before the API would have responded.
-2. A reverse proxy serves it as static fallback when mikser itself is down — the frontend keeps working through outages (list reads only; SSE is necessarily live-only). nginx pattern:
+- `GET /api/sitemap/entities` → `out/api/sitemap/entities/index.json`
+- `GET /api/sitemap/entities?a=1&b=2` → `out/api/sitemap/entities/a=1&b=2.json`
 
-```
+A reverse proxy can fail over to the cached file on backend errors using **stock nginx** — no Lua, no extra modules:
+
+```nginx
 location /api/sitemap/entities {
     proxy_pass http://localhost:3001;
     proxy_intercept_errors on;
@@ -49,11 +51,17 @@ location /api/sitemap/entities {
 }
 location @cache {
     root /var/www/out;
-    try_files /api/sitemap/entities.json =502;
+    try_files /api/sitemap/entities/$args.json
+              /api/sitemap/entities/index.json
+              =502;
 }
 ```
 
-The SPA's connection guard still triggers if the live backend is unreachable from the browser — but with the cache in place, the user lands on real content first and the guard only surfaces if they try to mutate or navigate to a non-cached resource.
+`$args` is whatever query string the client sent — same string mikser used as the cache filename. Path match, no hashing on either side.
+
+The SDK (`mikser-io-sdk-api ^2.4.2`) uses GET for `list()` calls so the cache fills from real traffic automatically. On invalidation (any entity change), mikser drops the whole cache directory; subsequent requests re-warm it on demand. SSE is necessarily live-only — when mikser is down, list reads survive but live updates pause until the backend returns.
+
+The SPA's connection guard still triggers if the live backend is unreachable from the browser — but with the cache in place, navigation reads succeed and the guard only surfaces if the user tries to mutate or open SSE.
 
 What is **not** live in any architecture:
 

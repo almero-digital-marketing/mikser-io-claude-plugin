@@ -94,13 +94,12 @@ const root = createClient({ baseUrl: url })
 export const documents = root.entities('public')
 
 // Narrow router data — used by entries() during prerender and by the
-// admin SPA's document list. initialUrl points at the api plugin's
-// cached output (mikser-io ^6.24.0, sitemap endpoint cache: true).
-// Static file, CDN-cacheable, survives mikser outages via reverse
-// proxy fallback. SSE keeps the admin SPA's view in sync once live.
-export const sitemap = root.entities('sitemap', {
-    initialUrl: '/api/sitemap/entities.json',
-})
+// admin SPA's document list. mikser-io ^6.25.0 + sitemap endpoint
+// cache: true means every GET /entities response is written to disk
+// as a side effect; sdk-api ^2.4.2's list() uses GET so the cache fills
+// from real traffic. A reverse proxy serves the cached file when
+// mikser is down — transparent to the SDK.
+export const sitemap = root.entities('sitemap')
 ```
 
 **Say:** "Two clients, shared between contexts. `documents` is the full-content client (catch-all's `load()`, admin's `useDocument`). `sitemap` is the narrow router client — small payload, plus a static snapshot for zero-roundtrip admin boot. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."

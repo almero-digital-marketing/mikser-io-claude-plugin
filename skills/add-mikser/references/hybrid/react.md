@@ -291,7 +291,7 @@ import AppEditor from './App.editor.jsx'
 const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
 const root = createClient({ baseUrl: MIKSER_URL })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })
+const sitemap = root.entities('sitemap')
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>

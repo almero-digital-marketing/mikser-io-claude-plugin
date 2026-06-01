@@ -216,7 +216,7 @@ out
         "preview": "node node_modules/mikser-io/app.js --server"
     },
     "dependencies": {
-        "mikser-io": "^6.24.0",
+        "mikser-io": "^6.25.1",
         "mikser-io-plugin-schemas": "^0.1.0",
         "zod": "^3.23.0"
     }
@@ -226,8 +226,8 @@ out
 Notes on the choices:
 
 - **No `mikser-io-render-markdown`.** That plugin is a template-engine helper (it extends `runtime.markdown()` for hbs / eta / liquid renderers) — it does *not* convert document bodies to HTML before the API serves them. The API serves `doc.content` as raw markdown, and the SPA renders that to HTML client-side via `markdown-it`. If the user later moves to SSG output, the render-markdown plugin becomes relevant; for the live-SPA shape it's the wrong tool.
-- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. Portable across installed versions, survives any future PATH/permission quirks. Once the project is established the user can shorten this if they want.
-- **`mikser-io ^6.24.0`** is required for the api plugin's `cache: true` option that backs the SDK's `initialUrl` fast path. Without it, fall back to running the `data` plugin (see comment block below for that pattern).
+- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. Portable across installed versions, survives any future PATH/permission quirks.
+- **`mikser-io ^6.25.1`** is required for the api plugin's per-query disk cache (`cache: true` writes responses to `out/<basePath>/<endpoint>/entities/<query>.json`). Pair with `mikser-io-sdk-api ^2.4.2` so the SDK uses GET for `list()` and the cache fills from real traffic. See the top-level README for the full caching + reverse-proxy story.
 
 ### `mikser-content/mikser.config.js`
 

@@ -243,9 +243,7 @@ import App from './App.jsx'
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', {
-    initialUrl: '/api/sitemap/entities.json',
-})
+const sitemap = root.entities('sitemap')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -271,7 +269,7 @@ import App from './App.jsx'  // their existing tree, with its router inside
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })
+const sitemap = root.entities('sitemap')
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -308,9 +306,11 @@ export default function App({ mikserUrl, sitemap }) {
     const status = useMikserStatus()
 
     // useMikserRoutes subscribes against the sitemap client (passed in
-    // from main.jsx). With initialUrl set, the route table is populated
-    // from the static snapshot before any SSE event arrives — so the
-    // first matched view renders immediately on first paint.
+    // from main.jsx). Once SSE delivers the first batch, the route
+    // table populates and the matched view renders. When a reverse
+    // proxy fronts mikser, the sitemap endpoint's disk cache survives
+    // backend outages — the SDK's GET-form list() reads cached data
+    // and the SPA keeps rendering routes even if mikser is down.
     const routes = useMikserRoutes({
         client: sitemap,
         mapRoute,

@@ -372,9 +372,7 @@ import App from './App.vue'
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', {
-    initialUrl: '/api/sitemap/entities.json',
-})
+const sitemap = root.entities('sitemap')
 
 // The editor app owns its own router. Hand-coded admin routes are
 // declared here; mikser slots catalog routes in alongside via
