@@ -342,6 +342,67 @@ It's worth telling the user up front:
 >
 > The mental model is the same — markdown files in `mikser-content/documents/` become routes — but the wiring goes through SvelteKit's hooks instead of a router instance.
 
+## Mode 2: Dynamic routes — when the catalog is big
+
+Everything above is **Mode 1**: the catch-all `[...slug]/+page.svelte` does a list-then-fetch lookup against the catalog, and `initialUrl` on the SDK client fills the snapshot for fast first paint. Works perfectly up to ~5–10k routes.
+
+**Switch to Mode 2** when:
+- The user says the catalog is large (e.g. "a docs site with ~20k pages").
+- You sniff the existing catalog and see > 5k matching documents.
+- The user explicitly mentions scale concerns.
+
+The diff is two files:
+
+### `src/lib/mikser.js` (Mode 2)
+
+Drop `initialUrl`. The snapshot is no longer the right tool; routes resolve per-navigation via the per-query disk cache.
+
+```js
+import { createClient } from 'mikser-io-sdk-api'
+import { PUBLIC_MIKSER_URL } from '$env/static/public'
+
+export const documents = createClient({ baseUrl: PUBLIC_MIKSER_URL })
+    .entities('public')
+```
+
+Also remove the `data.catalog.sitemap` block from `mikser-content/mikser.config.js` — no snapshot to publish.
+
+### `src/routes/[...slug]/+page.svelte` (Mode 2)
+
+Replace the inline two-step lookup with `useDocumentByRoute`:
+
+```svelte
+<script>
+    import { page } from '$app/state'
+    import { useDocumentByRoute } from 'mikser-io-sdk-svelte'
+    import PageView    from '$lib/views/PageView.svelte'
+    import ArticleView from '$lib/views/ArticleView.svelte'
+    import NotFound    from '$lib/views/NotFound.svelte'
+
+    const result = useDocumentByRoute(() => page.url.pathname)
+    const viewForComponent = { page: PageView, article: ArticleView }
+</script>
+
+{#if result.loading}
+    <div class="mikser-loading">Loading…</div>
+{:else if result.document}
+    {@const Component = viewForComponent[result.document.meta?.component] ?? PageView}
+    <Component document={result.document} />
+{:else}
+    <NotFound />
+{/if}
+```
+
+**Say:** "One catch-all, one lookup. `useDocumentByRoute(() => page.url.pathname)` issues `GET /api/public/entities?meta.route=/en/about&meta.published=true&limit=1`. With `cache: true` on the public endpoint, mikser writes that response to disk; the proxy serves the file directly for every subsequent visitor. So routes are populated by traffic, not by a snapshot — and the cache file is exactly per-route, no over-fetching. First visit to a cold route pays one API roundtrip; warm thereafter."
+
+### What to skip in Mode 2
+
+- `useDocuments` two-step lookup in the catch-all — replaced by `useDocumentByRoute`
+- The `data.catalog.sitemap` block in `mikser.config.js` — no snapshot needed
+- `initialUrl` on the client — no snapshot to consume
+
+Schemas, plugin-schemas wiring, markdown rendering, root layout connection guard — all unchanged.
+
 ## Skip list
 
 Do not touch:

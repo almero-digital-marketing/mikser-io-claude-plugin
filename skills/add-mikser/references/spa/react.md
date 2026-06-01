@@ -382,6 +382,110 @@ If you have non-mikser routes you want navigable even when mikser is unreachable
 
 **Say:** "App.jsx does the dispatch (`useMikserRoutes` + `useRoutes`) and hosts the connection guard. The fetch probe + 5s deadline ensures a missing or unreachable backend produces a clear error message instead of a forever-loading screen. The error panel tells the user exactly how to fix it — start the backend, reload."
 
+## Mode 2: Dynamic routes — when the catalog is big
+
+Everything above is **Mode 1**: every catalog route is enumerated up-front via the `/data/sitemap.json` snapshot. Works perfectly up to ~5–10k routes.
+
+**Switch to Mode 2** when:
+- The user says the catalog is large (e.g. "a blog with ~30k posts").
+- You sniff the existing catalog and see > 5k matching documents.
+- The user explicitly mentions scale concerns.
+
+The diff from Mode 1 is small but every layer changes:
+
+| File | Mode 1 | Mode 2 |
+|---|---|---|
+| `mikser.config.js` | `data.catalog.sitemap` block present | Remove the block — no snapshot |
+| `src/main.jsx` | `entities('public', { initialUrl: '/data/sitemap.json' })` | Plain `entities('public')` |
+| `src/App.jsx` | `useMikserRoutes` + `useRoutes` | Hand-coded `<Route>`s + one `<Route path="*">` catch-all |
+| `src/route-mapping.jsx` | `mapRoute(document)` | Not needed — dispatch inside the catch-all view |
+
+### `src/main.jsx` (Mode 2)
+
+```jsx
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
+import { createClient } from 'mikser-io-sdk-api'
+import { MikserProvider } from 'mikser-io-sdk-react'
+import './index.css'
+import App from './App.jsx'
+
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+
+// No initialUrl. Cold routes resolve per-navigation via the per-query
+// disk cache (cache: true on the public endpoint).
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public')
+
+createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+        <MikserProvider client={documents}>
+            <BrowserRouter>
+                <App mikserUrl={mikserUrl} />
+            </BrowserRouter>
+        </MikserProvider>
+    </React.StrictMode>,
+)
+```
+
+### `src/App.jsx` (Mode 2)
+
+```jsx
+import { Routes, Route } from 'react-router-dom'
+import { useMikserStatus } from 'mikser-io-sdk-react'
+import Home from './views/Home.jsx'
+import Search from './views/Search.jsx'
+import DocumentResolver from './views/DocumentResolver.jsx'
+
+export default function App({ mikserUrl }) {
+    const status = useMikserStatus()
+
+    if (status === 'unreachable') return <UnreachablePanel mikserUrl={mikserUrl} />
+    return (
+        <Routes>
+            <Route path="/"       element={<Home />} />
+            <Route path="/search" element={<Search />} />
+            {/* ONE catch-all */}
+            <Route path="*"       element={<DocumentResolver />} />
+        </Routes>
+    )
+    // ...connection guard + UnreachablePanel as in Mode 1
+}
+```
+
+### `src/views/DocumentResolver.jsx`
+
+```jsx
+import { useLocation } from 'react-router-dom'
+import { useDocumentByRoute } from 'mikser-io-sdk-react'
+import ArticleView from './ArticleView.jsx'
+import PageView    from './PageView.jsx'
+import NotFound    from './NotFound.jsx'
+
+const views = { article: ArticleView, page: PageView }
+
+export default function DocumentResolver() {
+    const { pathname } = useLocation()
+    const { document, loading } = useDocumentByRoute(pathname)
+
+    if (loading) return <p>Loading…</p>
+    if (!document) return <NotFound />
+    const View = views[document.meta?.component] ?? PageView
+    return <View entityId={document.id} />
+}
+```
+
+**Say:** "One catch-all instead of N registered routes. `useDocumentByRoute(pathname)` issues a list call filtered by `meta.route`. The first user pays an API roundtrip; mikser writes the response to the per-query cache file; every subsequent user gets that file served by the proxy. Routes are populated by traffic, not by a snapshot — the cache is the index."
+
+### What to skip in Mode 2
+
+- `src/route-mapping.jsx` — dispatch happens in the catch-all view
+- `useMikserRoutes` import — not used
+- The `mikser.config.js` `data.catalog.sitemap` block — no snapshot needed
+
+Schemas, plugin-schemas wiring, markdown rendering, connection guard — all unchanged.
+
 ## Skip list
 
 Do not touch:

@@ -405,6 +405,96 @@ const url = inject('mikserUrl')
 
 If you don't have an existing router and rely on mikser routes only, gate `<RouterView />` on `status === 'ready'` so a 'connecting' state shows first. If you have other routes, leave `<RouterView />` always rendered — the user can still navigate your routes even while mikser is connecting."
 
+## Mode 2: Dynamic routes — when the catalog is big
+
+Everything above is **Mode 1**: every catalog route is enumerated up-front via the `/data/sitemap.json` snapshot, then registered with vue-router via `useMikserRoutes`. Works perfectly up to ~5–10k routes.
+
+**Switch to Mode 2** when:
+- The user says the catalog is large (e.g. "a blog with ~30k posts", "an e-commerce catalog with 100k products").
+- You sniff the existing catalog and see > 5k matching documents.
+- The user explicitly mentions scale concerns ("I don't want to load all routes at boot").
+
+The diff from Mode 1 is small but every layer changes:
+
+### What changes
+
+| File | Mode 1 | Mode 2 |
+|---|---|---|
+| `mikser.config.js` | `data.catalog.sitemap` block present | Remove `data.catalog.sitemap` — no snapshot needed |
+| `src/main.js` | `entities('public', { initialUrl: '/data/sitemap.json' })`, `useMikserRoutes(router, { mapRoute })`, `await seeded` | Plain `entities('public')`, no `useMikserRoutes`, no `seeded` |
+| Router | Hand-coded routes + `useMikserRoutes` populates the rest | Hand-coded routes + **one catch-all** `path: '/:pathMatch(.*)*'` |
+| `src/route-mapping.js` | `mapRoute(document)` → route object | Not needed — dispatch happens inside the catch-all view via `useDocumentByRoute` |
+| Per-document view | `useDocument(() => props.entityId)` | Same — the catch-all view fetches via `useDocumentByRoute`, then per-doc views still use `useDocument` for live updates by id |
+
+### `src/main.js` (Mode 2)
+
+```js
+import { createApp } from 'vue'
+import { createRouter, createWebHistory } from 'vue-router'
+import { createClient } from 'mikser-io-sdk-api'
+import { createMikserPlugin } from 'mikser-io-sdk-vue'
+import App from './App.vue'
+
+const mikserUrl = import.meta.env.VITE_MIKSER_URL
+
+// No initialUrl — no snapshot. Cold routes are resolved per-navigation
+// via the per-query disk cache (cache: true on the public endpoint).
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public')
+
+const app = createApp(App)
+app.use(createMikserPlugin({ client: documents }))
+
+const router = createRouter({
+    history: createWebHistory(),
+    routes: [
+        // Hand-coded first
+        { path: '/',       name: 'home',   component: () => import('./views/Home.vue') },
+        { path: '/search', name: 'search', component: () => import('./views/Search.vue') },
+        // ONE catch-all resolves everything content-backed
+        { path: '/:pathMatch(.*)*', name: 'doc', component: () => import('./views/DocumentResolver.vue') },
+    ],
+})
+app.use(router)
+app.provide('mikserUrl', mikserUrl)
+app.mount('#app')
+```
+
+### `src/views/DocumentResolver.vue`
+
+```vue
+<script setup>
+import { useRoute } from 'vue-router'
+import { useDocumentByRoute } from 'mikser-io-sdk-vue'
+import ArticleView from './ArticleView.vue'
+import PageView    from './PageView.vue'
+import NotFound    from './NotFound.vue'
+
+const route = useRoute()
+const { document, loading } = useDocumentByRoute(() => route.path)
+
+const views = { article: ArticleView, page: PageView }
+</script>
+
+<template>
+    <p v-if="loading">Loading…</p>
+    <component v-else-if="document" :is="views[document.meta?.component] ?? PageView" :entity-id="document.id" />
+    <NotFound v-else />
+</template>
+```
+
+**Say:** "One catch-all instead of N registered routes. `useDocumentByRoute(() => route.path)` issues a list call filtered by `meta.route`. The first user pays an API roundtrip; mikser writes the response to the per-query cache file; every subsequent user gets that file served by the proxy. So routes are populated by traffic, not by a snapshot — the cache is the index. Add more `data.catalog.<name>` snapshots if you have nav menus, tag indexes, or other known-shape queries that benefit from build-time publish; the routing snapshot just isn't one of them at this scale."
+
+### What to skip in Mode 2
+
+Don't write these files (they're Mode 1 only):
+
+- `src/route-mapping.js` — dispatch happens in the catch-all view
+- The `await seeded` step in main.js — no snapshot to wait for
+- `useMikserRoutes` import — not used
+
+The connection guard, view components, markdown rendering, schemas, plugin-schemas wiring — all unchanged.
+
 ## Skip list
 
 Do not touch:
