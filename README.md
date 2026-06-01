@@ -36,30 +36,36 @@ Every architecture the skill scaffolds includes live SSE support — just applie
 
 The mechanism is identical across all three: `mikser-content`'s `api` plugin exposes a `/subscribe` SSE endpoint, [`mikser-io-sdk-api`](https://github.com/almero-digital-marketing/mikser-io-sdk-api)'s `client.live()` subscribes to it, and the framework SDKs (`useDocument` / `useDocuments` / `useMikserRoutes` / `useMikserStatus`) wrap that into reactive primitives. Even the connection guard ("Can't reach mikser backend") is live — if the backend comes back up while the page is open, the next probe sees it and the guard clears.
 
-**Per-query disk cache + outage resilience.** The api plugin's `cache: true` option (mikser-io ^6.25.1) writes every GET `/entities?...` response to disk, keyed by the request URL's raw query string:
+**Outage resilience — two mechanisms, one story.** Two different parts of the stack survive a brief mikser outage:
 
-- `GET /api/sitemap/entities` → `out/api/sitemap/entities/index.json`
-- `GET /api/sitemap/entities?a=1&b=2` → `out/api/sitemap/entities/a=1&b=2.json`
+1. **First-paint routing** — the `data` plugin's `catalog` config writes a static `out/data/sitemap.json` snapshot at finalize. The SDK loads it via `entities('public', { initialUrl: '/data/sitemap.json' })`. One CDN-cacheable file, no API roundtrip; whatever is fronting your static assets keeps serving it during an outage.
+2. **Live per-id reads** — the api plugin's `cache: true` option (mikser-io ^6.25.1) writes every GET `/entities?...` response to disk, keyed by the request URL's raw query string. Calls like `useDocument(id)` survive an outage out of the proxy's cached responses.
 
-A reverse proxy can fail over to the cached file on backend errors using **stock nginx** — no Lua, no extra modules:
+| Surface                              | Source                                      | What survives an outage                          |
+|---|---|---|
+| First-paint route table              | `/data/sitemap.json` (data plugin)          | Whatever the CDN / static layer is serving       |
+| `useDocument(id)` and similar reads  | `/api/public/entities/...` with `cache: true` | The proxy's cached response per request URL    |
+| Live updates (SSE)                   | `/api/public/subscribe`                     | Nothing — SSE pauses, `useMikserStatus` reports it |
+
+For the per-id cache, a reverse proxy fails over to disk using **stock nginx** — no Lua, no extra modules:
 
 ```nginx
-location /api/sitemap/entities {
+location /api/public/entities {
     proxy_pass http://localhost:3001;
     proxy_intercept_errors on;
     error_page 502 503 504 = @cache;
 }
 location @cache {
     root /var/www/out;
-    try_files /api/sitemap/entities/$args.json
-              /api/sitemap/entities/index.json
+    try_files /api/public/entities/$args.json
+              /api/public/entities/index.json
               =502;
 }
 ```
 
 `$args` is whatever query string the client sent — same string mikser used as the cache filename. Path match, no hashing on either side.
 
-The SDK (`mikser-io-sdk-api ^2.4.2`) uses GET for `list()` calls so the cache fills from real traffic automatically. On invalidation (any entity change), mikser drops the whole cache directory; subsequent requests re-warm it on demand. SSE is necessarily live-only — when mikser is down, list reads survive but live updates pause until the backend returns.
+The SDK (`mikser-io-sdk-api ^2.4.2`) uses GET for `list()` calls so the cache fills from real traffic automatically. On invalidation (any entity change), mikser drops the whole cache directory; subsequent requests re-warm it on demand. See [mikser-io's caching docs](https://github.com/almero-digital-marketing/mikser-io/blob/main/documentation/caching.md) for the full nginx / Caddy / Cloudflare / Apache configs.
 
 The SPA's connection guard still triggers if the live backend is unreachable from the browser — but with the cache in place, navigation reads succeed and the guard only surfaces if the user tries to mutate or open SSE.
 
