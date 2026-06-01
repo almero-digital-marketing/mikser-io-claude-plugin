@@ -77,30 +77,51 @@ Inside `<div id="root">`, replace whatever's there:
 ### 4. `src/route-mapping.jsx`
 
 ```jsx
-// Map each document's `meta.layout` to the view component that renders it.
-// Add a new layout here when you add a new schema in mikser-content/schemas/.
+// Map each document's `meta.component` to the React view that renders it.
+// Add a new entry here when you add a new schema in mikser-content/schemas/.
+//
+// meta.component (this file's dispatch key) is separate from
+// meta.layout (mikser's SSG render template). Keeping them separate
+// avoids "layout 'page' not found" warnings from mikser when a
+// SPA-only component name has no matching template.
 import PageView from './views/PageView.jsx'
 import ArticleView from './views/ArticleView.jsx'
 import NotFound from './views/NotFound.jsx'
 
-const viewForLayout = {
+const viewForComponent = {
     page: PageView,
     article: ArticleView,
 }
 
-// useMikserRoutes calls this for every document. Return a react-router
-// route object — or null/undefined to skip the document.
+// Resolve URL path. Prefer meta.route; fall back to destination
+// (mikser computes this from source path + cleanUrls). Returns null
+// to skip documents with neither.
+function routeFor(doc) {
+    if (doc.meta?.route) return doc.meta.route
+    if (doc.destination) {
+        return doc.destination
+            .replace(/\/index\.html?$/, '/')
+            .replace(/\.html?$/, '')
+    }
+    return null
+}
+
+// useMikserRoutes calls this for every document in the sitemap stream.
+// Return a react-router route object — or null/undefined to skip.
+// The view receives only entityId; it fetches the full document via
+// useDocument. Keeps the sitemap payload lean.
 export function mapRoute(doc) {
-    const Component = viewForLayout[doc.meta?.layout] ?? NotFound
+    const path = routeFor(doc)
+    if (!path) return null
+    const Component = viewForComponent[doc.meta?.component] ?? NotFound
     return {
-        path: doc.meta.route,
-        // Pass the live document into the view so it doesn't have to refetch.
-        element: <Component doc={doc} />,
+        path,
+        element: <Component entityId={doc.id} />,
     }
 }
 ```
 
-**Say:** "This is the dispatch point. `meta.layout: 'article'` in a markdown file lands here and picks `ArticleView`. New layout = one entry here + one schema file."
+**Say:** "Two changes from a naive map. First, dispatch is on `meta.component`, not `meta.layout` — layout is reserved for mikser's SSG render pipeline. Second, the route path falls back to `doc.destination` when `meta.route` isn't explicit. Each view gets the entityId and fetches its own live document."
 
 ### 5. `src/markdown.js`
 
@@ -125,41 +146,55 @@ export function renderMarkdown(source) {
 
 ```jsx
 import { useMemo } from 'react'
+import { useDocument } from 'mikser-io-sdk-react'
 import { renderMarkdown } from '../markdown.js'
 
-export default function PageView({ doc }) {
-    // useMemo re-runs when doc.content changes. SSE → mikser pushes a new
-    // doc → React re-renders this view → the memo recomputes the HTML.
-    const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
+export default function PageView({ entityId }) {
+    // useDocument fetches the full document from the `public` endpoint
+    // and stays subscribed: edit the markdown file and the body
+    // re-renders without a refresh. The sitemap router knows only
+    // id+meta+destination; this view does the full fetch.
+    const { document } = useDocument(entityId)
+    const html = useMemo(
+        () => (document ? renderMarkdown(document.content) : ''),
+        [document?.content],
+    )
 
+    if (!document) return null
     return (
         <article className="page" style={{ maxWidth: '70ch', margin: '2rem auto', padding: '0 1rem' }}>
-            <h1>{doc.meta.title}</h1>
+            <h1>{document.meta?.title}</h1>
             <div dangerouslySetInnerHTML={{ __html: html }} />
         </article>
     )
 }
 ```
 
-**Say:** "Generic page view — your fallback. The `doc` prop is the live document; edits push here automatically over SSE and `useMemo` re-converts the body."
+**Say:** "Generic page view — your fallback. `useDocument(entityId)` subscribes to the document via SSE; edits push here automatically and `useMemo` re-converts the body. The router only needs the id from the sitemap snapshot; this view does the live fetch."
 
 ### 7. `src/views/ArticleView.jsx`
 
 ```jsx
 import { useMemo } from 'react'
+import { useDocument } from 'mikser-io-sdk-react'
 import { renderMarkdown } from '../markdown.js'
 
-export default function ArticleView({ doc }) {
-    const html = useMemo(() => renderMarkdown(doc.content), [doc.content])
+export default function ArticleView({ entityId }) {
+    const { document } = useDocument(entityId)
+    const html = useMemo(
+        () => (document ? renderMarkdown(document.content) : ''),
+        [document?.content],
+    )
 
+    if (!document) return null
     return (
         <article className="article" style={{ maxWidth: '70ch', margin: '2rem auto', padding: '0 1rem' }}>
             <header>
-                <h1>{doc.meta.title}</h1>
+                <h1>{document.meta?.title}</h1>
                 <p style={{ color: '#666', fontSize: '0.9em' }}>
-                    By {doc.meta.author} ·{' '}
-                    <time dateTime={doc.meta.date}>
-                        {new Date(doc.meta.date).toLocaleDateString()}
+                    By {document.meta?.author} ·{' '}
+                    <time dateTime={document.meta?.date}>
+                        {new Date(document.meta?.date).toLocaleDateString()}
                     </time>
                 </p>
             </header>
@@ -192,6 +227,8 @@ The pattern: render React immediately, mount `MikserProvider` so hooks have a cl
 
 Preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
+Two clients now: `documents` (public endpoint, used by `useDocument` inside views) and `sitemap` (narrow endpoint, with the static snapshot for fast first paint, passed to `useMikserRoutes` in App).
+
 #### Variant A — user has no existing router
 
 ```jsx
@@ -204,13 +241,17 @@ import './index.css'
 import App from './App.jsx'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const client = createClient({ baseUrl: mikserUrl }).entities('public')
+const root = createClient({ baseUrl: mikserUrl })
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', {
+    initialUrl: '/data/sitemap.json',
+})
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-        <MikserProvider client={client}>
+        <MikserProvider client={documents}>
             <BrowserRouter>
-                <App mikserUrl={mikserUrl} />
+                <App mikserUrl={mikserUrl} sitemap={sitemap} />
             </BrowserRouter>
         </MikserProvider>
     </React.StrictMode>,
@@ -228,18 +269,20 @@ import './index.css'
 import App from './App.jsx'  // their existing tree, with its router inside
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const client = createClient({ baseUrl: mikserUrl }).entities('public')
+const root = createClient({ baseUrl: mikserUrl })
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', { initialUrl: '/data/sitemap.json' })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-        <MikserProvider client={client}>
-            <App mikserUrl={mikserUrl} />
+        <MikserProvider client={documents}>
+            <App mikserUrl={mikserUrl} sitemap={sitemap} />
         </MikserProvider>
     </React.StrictMode>,
 )
 ```
 
-**Say (both variants):** "Two-call setup: `createClient({ baseUrl })` returns a root client; `.entities('public')` returns the entities client the React hooks actually use. `MikserProvider` holds it for hooks beneath. The `mikserUrl` prop drops the URL into App.jsx so the connection guard there can show it in error messages."
+**Say (both variants):** "Two clients now: `documents` (public endpoint, full content fetch — used by `useDocument` inside views) and `sitemap` (narrow endpoint, with the static snapshot at `/data/sitemap.json` for zero-roundtrip first paint). `MikserProvider` registers documents for hooks beneath. The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it. The sitemap's `meta.component` filter is the load-bearing convention: only documents with a component end up as routes."
 
 ### 10. `src/App.jsx`
 
@@ -257,16 +300,19 @@ import { useMikserRoutes, useMikserStatus } from 'mikser-io-sdk-react'
 import { mapRoute } from './route-mapping.jsx'
 import NotFound from './views/NotFound.jsx'
 
-export default function App({ mikserUrl }) {
+export default function App({ mikserUrl, sitemap }) {
     // useMikserStatus probes the backend once via client.list({ limit: 1 })
     // and returns 'connecting' | 'ready' | 'unreachable'. Settles to one
     // of the terminal states within ~1s on success or 5s on failure.
     // Override timeoutMs if 5s isn't right for your network.
     const status = useMikserStatus()
 
-    // useMikserRoutes subscribes regardless. Once the SSE batch lands,
-    // its returned routes array re-renders the matched view.
+    // useMikserRoutes subscribes against the sitemap client (passed in
+    // from main.jsx). With initialUrl set, the route table is populated
+    // from the static snapshot before any SSE event arrives — so the
+    // first matched view renders immediately on first paint.
     const routes = useMikserRoutes({
+        client: sitemap,
         mapRoute,
         staticRoutes: [
             // { path: '/login', element: <Login /> },

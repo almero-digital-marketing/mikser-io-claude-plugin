@@ -26,24 +26,31 @@ PUBLIC_MIKSER_URL=http://localhost:3001
 
 **Say:** "SvelteKit exposes `PUBLIC_*` env vars to the browser via `$env/static/public`. Change for staging/prod."
 
-### 2. `src/lib/mikser.js` — single shared entities client
+### 2. `src/lib/mikser.js` — two clients (documents + sitemap)
 
 ```js
-// One mikser entities client per app. Exported so both client-side
-// runes (via the +layout.svelte registration step below) and build-time
-// hooks (entries() in +page.server.js) can use the same instance.
+// Two clients, one root. Exported so both client-side runes (via the
+// +layout.svelte registration step) and build-time hooks (entries()
+// in +page.server.js) can use them.
 import { createClient } from 'mikser-io-sdk-api'
 import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-// Two-step setup: createClient({ baseUrl }) returns a root client;
-// .entities('public') returns the per-endpoint client with the methods
-// the SDK actually calls — list, listAll, live, urlFor, render. The
-// endpoint name matches the key under `api.endpoints` in
-// mikser-content/mikser.config.js (`public`).
-export const client = createClient({ baseUrl: PUBLIC_MIKSER_URL }).entities('public')
+const root = createClient({ baseUrl: PUBLIC_MIKSER_URL })
+
+// Full content fetch — used by useDocument inside views. The /api/public
+// endpoint serves complete documents including the markdown body.
+export const documents = root.entities('public')
+
+// Narrow router data — used by the catch-all to find the document for
+// the current URL. initialUrl points at the static snapshot written by
+// the data plugin's catalog.sitemap config. First paint is zero-roundtrip;
+// SSE then keeps the sitemap in sync.
+export const sitemap = root.entities('sitemap', {
+    initialUrl: '/data/sitemap.json',
+})
 ```
 
-**Say:** "One client instance, shared. Two-call setup: `baseUrl` for the root client, `.entities('public')` for the endpoint-specific entities client. Notice there's no `setMikserClient` call in this file — that has to happen inside a component because it uses Svelte's context API, which only works during component initialisation. We do it in `+layout.svelte` next."
+**Say:** "Two clients, one root. `documents` is the full-content client (used by `useDocument` for view bodies). `sitemap` is the narrow router client — its `initialUrl` points at the static snapshot from the data plugin, so the router's first paint is a CDN-cached file read, not an API roundtrip. Both share the same root, so the connection (auth headers, fetch override, etc.) is configured once."
 
 ### 3. `src/routes/+layout.svelte` — register the client + connection guard
 
@@ -55,13 +62,15 @@ If the file doesn't exist, create it:
 
 ```svelte
 <script>
-    import { client } from '$lib/mikser.js'
+    import { documents } from '$lib/mikser.js'
     import { setMikserClient, useMikserStatus } from 'mikser-io-sdk-svelte'
     import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-    // Registers the client in component context. Every rune below this
-    // layout resolves the client from here.
-    setMikserClient(client)
+    // Register the documents client in component context. Every rune
+    // below this layout (useDocument, useDocuments) resolves it from
+    // here. The sitemap client is used directly by the catch-all
+    // route's load — it doesn't need to be in context.
+    setMikserClient(documents)
 
     // useMikserStatus probes the backend once and returns a reactive
     // holder. status.current settles to 'ready' on success or
@@ -139,39 +148,57 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 <script>
     import { page } from '$app/state'
     import { useDocuments } from 'mikser-io-sdk-svelte'
+    import { sitemap } from '$lib/mikser.js'
     import PageView from '$lib/views/PageView.svelte'
     import ArticleView from '$lib/views/ArticleView.svelte'
     import NotFound from '$lib/views/NotFound.svelte'
 
-    // Build the current route from the slug. The leading slash matches
-    // what the frontmatter writes (e.g. `route: /about`).
+    // Build the current URL path from the slug. The leading slash
+    // matches both meta.route ("/about") and a destination-derived
+    // path ("/about/" stripped to "/about").
     const route = $derived('/' + (page.params.slug ?? ''))
 
-    // useDocuments takes a query *getter*. The SDK destructures the
-    // result into { filter, sort, fields, limit, skip } — so the filter
-    // must live under a `filter` key. Passing the filter directly
-    // (without the wrapper) silently matches everything and the catch-
-    // all resolves to whichever document came back first, on every URL.
-    const result = useDocuments(() => ({
-        filter: { 'meta.route': route, 'meta.published': true },
-    }))
+    // Query the sitemap (narrow, cached) — not public. We're matching
+    // by meta.route OR destination, so the catch-all works for docs
+    // that don't set meta.route explicitly. The explicit { client }
+    // option points useDocuments at the sitemap client; without it,
+    // the rune would inject the documents client from layout context.
+    const list = useDocuments(
+        () => ({
+            filter: {
+                $or: [
+                    { 'meta.route': route },
+                    { destination: { $regex: `^${route.replace(/\/$/, '')}(/index)?\\.html?$` } },
+                ],
+                'meta.published': true,
+            },
+        }),
+        { client: sitemap },
+    )
 
-    const doc = $derived(result.documents[0] ?? null)
+    // Got the sitemap entry — now fetch the full document by id from
+    // the public endpoint via useDocument (which uses the documents
+    // client registered in the root layout context).
+    import { useDocument } from 'mikser-io-sdk-svelte'
+    const entityId = $derived(list.documents[0]?.id ?? null)
+    const doc = useDocument(() => entityId)
 
-    const viewForLayout = {
+    const viewForComponent = {
         page: PageView,
         article: ArticleView,
     }
 
     const Component = $derived(
-        doc ? (viewForLayout[doc.meta?.layout] ?? NotFound) : null
+        doc.document
+            ? (viewForComponent[doc.document.meta?.component] ?? NotFound)
+            : null
     )
 </script>
 
-{#if result.loading}
+{#if list.loading || (entityId && doc.loading)}
     <div class="mikser-loading">Loading…</div>
-{:else if doc && Component}
-    <Component {doc} />
+{:else if doc.document && Component}
+    <Component document={doc.document} />
 {:else}
     <NotFound />
 {/if}
@@ -187,7 +214,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 </style>
 ```
 
-**Say:** "Catch-all. SvelteKit hits this for any URL not claimed by another route. The query shape `{ filter: {...} }` is the SDK contract — wrapping the filter is required (the test that surfaced this bug spent half an hour debugging a catch-all that resolved every URL to the same doc because the wrapper was missing). Add a new layout = one entry in `viewForLayout` + one schema file."
+**Say:** "Two-step lookup: query the sitemap for `meta.route` OR a matching `destination`, then fetch the full document from public by id. The sitemap client has the static snapshot — the first paint reads it without an API roundtrip. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
 
 ### 7. `src/routes/[...slug]/+page.server.js` — prerender entries (optional)
 
@@ -197,17 +224,24 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 
 ```js
 import { generateMikserRoutes } from 'mikser-io-sdk-svelte'
-import { client } from '$lib/mikser.js'
+import { sitemap } from '$lib/mikser.js'
 
 // `entries()` tells SvelteKit which parameter values exist for this
-// dynamic route. We read them from mikser's catalog so the prerender
-// pipeline can emit one HTML file per document.
+// dynamic route. Use the sitemap client — it's filtered to documents
+// with meta.component (i.e. things the SPA actually routes). Same
+// fallback logic as the catch-all: meta.route → destination.
 export const entries = async () => {
-    const routes = await generateMikserRoutes({
-        client,
-        mapRoute: document => ({ slug: document.meta.route.replace(/^\//, '') }),
+    return generateMikserRoutes({
+        client: sitemap,
+        mapRoute: document => {
+            const path = document.meta?.route ?? (
+                document.destination
+                    ?.replace(/\/index\.html?$/, '/')
+                    ?.replace(/\.html?$/, '')
+            )
+            return path ? { slug: path.replace(/^\//, '') } : null
+        },
     })
-    return routes
 }
 
 // Default to client-side render. Flip to `true` once you want a static
@@ -223,15 +257,16 @@ export const prerender = false
 ```svelte
 <script>
     import { renderMarkdown } from '$lib/markdown.js'
-    let { doc } = $props()
 
-    // $derived re-runs when doc.content changes. SSE updates flow
-    // through useDocuments → catch-all → this prop → derived html.
-    const html = $derived(renderMarkdown(doc.content))
+    // The catch-all passes the document from useDocument — already
+    // live via SSE. Just render it.
+    let { document } = $props()
+
+    const html = $derived(renderMarkdown(document.content))
 </script>
 
 <article class="page">
-    <h1>{doc.meta.title}</h1>
+    <h1>{document.meta?.title}</h1>
     <!-- {@html ...} injects the markdown-it output. -->
     {@html html}
 </article>
@@ -241,24 +276,24 @@ export const prerender = false
 </style>
 ```
 
-**Say:** "Generic page view — your fallback. `doc` is live; SSE updates push here automatically and `$derived` re-converts the body."
+**Say:** "Generic page view — your fallback. `document` is the live doc from the catch-all's `useDocument`; SSE updates push here automatically and `$derived` re-converts the body."
 
 ### 9. `src/lib/views/ArticleView.svelte`
 
 ```svelte
 <script>
     import { renderMarkdown } from '$lib/markdown.js'
-    let { doc } = $props()
-    const html = $derived(renderMarkdown(doc.content))
+    let { document } = $props()
+    const html = $derived(renderMarkdown(document.content))
 </script>
 
 <article class="article">
     <header>
-        <h1>{doc.meta.title}</h1>
+        <h1>{document.meta?.title}</h1>
         <p class="byline">
-            By {doc.meta.author} ·
-            <time datetime={doc.meta.date}>
-                {new Date(doc.meta.date).toLocaleDateString()}
+            By {document.meta?.author} ·
+            <time datetime={document.meta?.date}>
+                {new Date(document.meta?.date).toLocaleDateString()}
             </time>
         </p>
     </header>
