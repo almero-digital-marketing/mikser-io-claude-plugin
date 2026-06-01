@@ -1,7 +1,7 @@
 {
     "name": "mikser-io-claude-plugin",
-    "description": "Claude Code skills for bootstrapping mikser-io content backends into Vue, React, and SvelteKit projects.",
-    "version": "0.1.0",
+    "description": "Claude Code skills for working with mikser-io content backends — bootstrap into Vue/React/SvelteKit projects, and generate Zod schemas from existing document shape.",
+    "version": "0.2.0",
     "author": {
         "name": "Almero Digital Marketing",
         "url": "https://github.com/almero-digital-marketing"

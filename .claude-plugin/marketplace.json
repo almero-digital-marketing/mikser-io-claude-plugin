@@ -1,6 +1,6 @@
 {
     "name": "mikser-io",
-    "description": "Claude Code plugins for the mikser-io content engine — skills that bootstrap mikser-io into Vue, React, and SvelteKit projects.",
+    "description": "Claude Code plugins for the mikser-io content engine — skills that bootstrap mikser-io into Vue, React, and SvelteKit projects, and generate Zod schemas from existing document shape.",
     "owner": {
         "name": "Almero Digital Marketing",
         "url": "https://github.com/almero-digital-marketing"
