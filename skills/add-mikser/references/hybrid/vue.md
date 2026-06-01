@@ -187,10 +187,16 @@ The most important file in the recipe. Three consumers read this — keep it min
 ```js
 // Shared between the public build (build/generate-routes.mjs +
 // src/public/router.js) and the editor build (src/editor/main.js).
-// One source of truth for "what view does this layout map to."
+// One source of truth for "what view does this component map to."
 //
-// Add a new layout here when you add a new schema in
+// Add a new entry here when you add a new schema in
 // mikser-content/schemas/ — both builds pick it up on next reload.
+//
+// Note: viewForComponent (this file's dispatch key) maps to meta.component,
+// not meta.layout. meta.layout is reserved for mikser's SSG render
+// templates (layouts/<name>.hbs etc.); meta.component is the SPA's
+// view dispatch. Both can be set on the same document in Hybrid SSG —
+// they don't collide.
 
 export const views = {
     article: () => import('./views/ArticleView.vue'),
@@ -198,21 +204,35 @@ export const views = {
     // Add more: product, landing, changelog, etc.
 }
 
+// Resolve URL path. Prefer meta.route; fall back to destination
+// (mikser computes this from source path + cleanUrls).
+function routeFor(document) {
+    if (document.meta?.route) return document.meta.route
+    if (document.destination) {
+        return document.destination
+            .replace(/\/index\.html?$/, '/')
+            .replace(/\.html?$/, '')
+    }
+    return null
+}
+
 export function mapRoute(document) {
+    const path = routeFor(document)
+    if (!path) return null
     return {
-        path:      document.meta.route,
+        path,
         name:      document.id,
-        component: views[document.meta.layout] ?? views.page,
+        component: views[document.meta?.component] ?? views.page,
         props:     route => ({ entityId: document.id, params: route.params }),
         meta: {
-            layout: document.meta?.layout,
-            title:  document.meta?.title,
+            component: document.meta?.component,
+            title:     document.meta?.title,
         },
     }
 }
 ```
 
-**Say:** "The load-bearing file. The build script, the public router, and the editor router all import `mapRoute` from here. Add a new layout (say `product`) by adding one entry to `views` + one schema file in `mikser-content/schemas/product.js`. Both builds reflect it on the next build."
+**Say:** "The load-bearing file. The build script, the public router, and the editor router all import `mapRoute` from here. Add a new component (say `product`) by adding one entry to `views` + one schema file in `mikser-content/schemas/product.js`. Both builds reflect it on the next build."
 
 ### 9. `build/generate-routes.mjs` — build-time route enumeration
 
@@ -234,23 +254,27 @@ import { generateMikserRoutes } from 'mikser-io-sdk-vue'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-const docs = createClient({ baseUrl: process.env.MIKSER_URL ?? 'http://localhost:3001' })
-    .entities('public')
+// Build-time uses the sitemap endpoint — it's filtered to documents
+// with meta.component (i.e. things the SPA actually routes), and the
+// data plugin has already written /data/sitemap.json that the public
+// runtime reads. Same shape, two consumers.
+const sitemap = createClient({ baseUrl: process.env.MIKSER_URL ?? 'http://localhost:3001' })
+    .entities('sitemap')
 
 // Use the SAME mapRoute as the runtime router — one source of truth.
 // We strip the component function before serializing (functions don't
-// JSON-encode); the runtime rehydrates by looking up the layout in
+// JSON-encode); the runtime rehydrates by looking up the component in
 // the views table.
 const { mapRoute } = await import(resolve(here, '../src/route-mapping.js'))
 
-const routes = await generateMikserRoutes({ client: docs, mapRoute })
+const routes = (await generateMikserRoutes({ client: sitemap, mapRoute })).filter(Boolean)
 
 const serializable = routes.map(r => ({
-    path:   r.path,
-    name:   r.name,
-    layout: r.meta?.layout,
-    title:  r.meta?.title,
-    props:  r.props ? r.props({ params: {} }) : undefined,
+    path:      r.path,
+    name:      r.name,
+    component: r.meta?.component,
+    title:     r.meta?.title,
+    props:     r.props ? r.props({ params: {} }) : undefined,
 }))
 
 const outDir  = resolve(here, '../src/generated')
@@ -297,8 +321,8 @@ export const createApp = ViteSSG(
 
 ```js
 // Public router — reads the build-time manifest, rehydrates the
-// component for each route by looking up the layout in the shared
-// views table.
+// component for each route by looking up meta.component in the
+// shared views table.
 import routes from '../generated/routes.json'
 import { views } from '../route-mapping.js'
 
@@ -313,9 +337,9 @@ export function createRouter() {
         ...routes.map(r => ({
             path:      r.path,
             name:      r.name,
-            component: views[r.layout] ?? views.page,
+            component: views[r.component] ?? views.page,
             props:     () => ({ entityId: r.props?.entityId ?? r.name }),
-            meta:      { layout: r.layout, title: r.title },
+            meta:      { component: r.component, title: r.title },
         })),
 
         { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue') },
@@ -346,7 +370,11 @@ import { mapRoute } from '../route-mapping.js'
 import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const documents = createClient({ baseUrl: mikserUrl }).entities('public')
+const root = createClient({ baseUrl: mikserUrl })
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', {
+    initialUrl: '/data/sitemap.json',
+})
 
 // The editor app owns its own router. Hand-coded admin routes are
 // declared here; mikser slots catalog routes in alongside via
@@ -361,11 +389,12 @@ const router = createRouter({
     ],
 })
 
-// Wire mikser into the same router. Pass `client` explicitly — we're at
-// module scope, where Vue's inject() doesn't have an active setup
-// context. (Inside components, useMikserStatus etc. inject normally.)
+// Wire mikser into the same router using the sitemap client. Pass
+// `client` explicitly — we're at module scope, where Vue's inject()
+// doesn't have an active setup context. The plugin still registers
+// the documents client so views can useDocument().
 const { seeded } = useMikserRoutes(router, {
-    client: documents,
+    client: sitemap,
     mapRoute,
 })
 
@@ -430,12 +459,19 @@ npm run dev</pre>
 import { useDocuments } from 'mikser-io-sdk-vue'
 
 // Recently-edited documents — useful surface for an editor.
+// Limited to documents the SPA actually routes (meta.component set).
 const { documents: recent } = useDocuments({
-    filter: { type: 'document' },
+    filter: { type: 'document', 'meta.component': { $exists: true } },
     sort:   { stamp: -1 },
-    fields: ['id', 'meta.title', 'meta.layout', 'meta.route', 'stamp'],
+    fields: ['id', 'meta.title', 'meta.component', 'meta.route', 'destination', 'stamp'],
     limit:  15,
 })
+
+function routeFor(d) {
+    if (d.meta?.route) return d.meta.route
+    if (d.destination) return d.destination.replace(/\/index\.html?$/, '/').replace(/\.html?$/, '')
+    return null
+}
 </script>
 
 <template>
@@ -443,9 +479,9 @@ const { documents: recent } = useDocuments({
         <h1>Recently edited</h1>
         <ul>
             <li v-for="d in recent" :key="d.id">
-                <router-link :to="d.meta.route">
+                <router-link :to="routeFor(d) ?? '#'">
                     <strong>{{ d.meta?.title }}</strong>
-                    <span class="layout-badge">{{ d.meta?.layout }}</span>
+                    <span class="component-badge">{{ d.meta?.component }}</span>
                 </router-link>
             </li>
         </ul>
