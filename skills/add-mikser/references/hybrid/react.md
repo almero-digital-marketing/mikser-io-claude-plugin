@@ -133,20 +133,32 @@ import { generateMikserRoutes } from 'mikser-io-sdk-react'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIKSER_URL = process.env.MIKSER_URL || 'http://localhost:3001'
 
-const client = createClient({ baseUrl: MIKSER_URL }).entities('public')
+// Build-time uses the sitemap endpoint — narrow query (meta.component
+// only), small payload, lined up with the runtime's sitemap.json snapshot.
+const client = createClient({ baseUrl: MIKSER_URL }).entities('sitemap')
+
+function routeFor(d) {
+    if (d.meta?.route) return d.meta.route
+    if (d.destination) return d.destination.replace(/\/index\.html?$/, '/').replace(/\.html?$/, '')
+    return null
+}
 
 // Build-time, one-shot. mapRoute returns a plain serializable descriptor
 // (no React elements) that the public entry rehydrates into routes at
 // runtime.
-const routes = await generateMikserRoutes({
+const routes = (await generateMikserRoutes({
     client,
-    mapRoute: (document) => ({
-        path: document.route,
-        layout: document?.meta?.layout ?? 'page',
-        id: document.id,
-        title: document?.meta?.title ?? '',
-    }),
-})
+    mapRoute: (document) => {
+        const path = routeFor(document)
+        if (!path) return null
+        return {
+            path,
+            component: document?.meta?.component ?? 'page',
+            id:        document.id,
+            title:     document?.meta?.title ?? '',
+        }
+    },
+})).filter(Boolean)
 
 mkdirSync(resolve(__dirname, '../src/generated'), { recursive: true })
 writeFileSync(
@@ -157,7 +169,7 @@ writeFileSync(
 console.log(`Generated ${routes.length} routes → src/generated/routes.json`)
 ```
 
-**Say:** "Runs in Node before Vite. Asks mikser \"what routes exist?\" via `generateMikserRoutes` (auto-paginated under the hood). Writes a JSON manifest the public entry reads — no React elements in the JSON, because functions don't serialize; just `{ path, layout, id, title }`. The runtime maps `layout` back to the view component via the shared `route-mapping.jsx`."
+**Say:** "Runs in Node before Vite. Asks mikser \"what routes exist?\" via the sitemap endpoint — small payload, only documents with `meta.component`. Writes a JSON manifest the public entry reads — no React elements in the JSON, because functions don't serialize; just `{ path, component, id, title }`. The runtime maps `component` back to the view via the shared `route-mapping.jsx`. Note the path fallback: prefer `meta.route` but fall back to `destination` so a markdown file can live without an explicit route in its frontmatter."
 
 ### 9. `src/route-mapping.jsx` — shared
 
@@ -165,30 +177,38 @@ console.log(`Generated ${routes.length} routes → src/generated/routes.json`)
 import ArticleView from './views/ArticleView.jsx'
 import PageView from './views/PageView.jsx'
 
-export const viewForLayout = {
+export const viewForComponent = {
     article: ArticleView,
     page: PageView,
     landing: PageView,
     product: PageView,
 }
 
+function routeFor(d) {
+    if (d.meta?.route) return d.meta.route
+    if (d.destination) return d.destination.replace(/\/index\.html?$/, '/').replace(/\.html?$/, '')
+    return null
+}
+
 /**
  * mapRoute — used by the editor (runtime) side via useMikserRoutes.
- * Returns { path, element } for React Router.
+ * Returns { path, element } for React Router (or null to skip).
  *
- * The public side uses the manifest + viewForLayout directly (no element
- * rehydration — it builds elements on the fly at runtime).
+ * The public side uses the manifest + viewForComponent directly (no
+ * element rehydration — it builds elements on the fly at runtime).
  */
 export function mapRoute(document) {
-    const View = viewForLayout[document?.meta?.layout] ?? PageView
+    const path = routeFor(document)
+    if (!path) return null
+    const View = viewForComponent[document?.meta?.component] ?? PageView
     return {
-        path: document.route,
+        path,
         element: <View id={document.id} />,
     }
 }
 ```
 
-**Say:** "The shared mapping. Editor uses the full `mapRoute` (returns React elements); public uses just `viewForLayout` and the JSON manifest (rehydrates elements at runtime since React elements don't survive JSON serialization). Add a new layout = add an entry to `viewForLayout` + create the view component."
+**Say:** "The shared mapping. Editor uses `mapRoute` (returns React elements); public uses just `viewForComponent` and the JSON manifest (rehydrates elements at runtime since React elements don't survive JSON serialization). Add a new component = add an entry to `viewForComponent` + create the view component."
 
 ### 10. `src/main.public.jsx` — public entry
 
@@ -202,11 +222,14 @@ import AppPublic from './App.public.jsx'
 import generated from './generated/routes.json'
 
 const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
-const client = createClient({ baseUrl: MIKSER_URL }).entities('public')
+// Public side uses only the documents client — views fetch their own
+// document via useDocument. No sitemap subscription at runtime; the
+// route manifest is baked in.
+const documents = createClient({ baseUrl: MIKSER_URL }).entities('public')
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>
-        <MikserProvider client={client}>
+        <MikserProvider client={documents}>
             <BrowserRouter>
                 <AppPublic routes={generated} />
             </BrowserRouter>
@@ -219,7 +242,7 @@ createRoot(document.getElementById('app')).render(
 
 ```jsx
 import { Link, useRoutes } from 'react-router-dom'
-import { viewForLayout } from './route-mapping.jsx'
+import { viewForComponent } from './route-mapping.jsx'
 
 /**
  * Public shell. The route manifest is generated at build time and
@@ -229,7 +252,7 @@ import { viewForLayout } from './route-mapping.jsx'
  */
 export default function AppPublic({ routes: manifest }) {
     const routes = manifest.map(entry => {
-        const View = viewForLayout[entry.layout] ?? viewForLayout.page
+        const View = viewForComponent[entry.component] ?? viewForComponent.page
         return { path: entry.path, element: <View id={entry.id} /> }
     })
 
@@ -266,13 +289,15 @@ import { MikserProvider } from 'mikser-io-sdk-react'
 import AppEditor from './App.editor.jsx'
 
 const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
-const client = createClient({ baseUrl: MIKSER_URL }).entities('public')
+const root = createClient({ baseUrl: MIKSER_URL })
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', { initialUrl: '/data/sitemap.json' })
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>
-        <MikserProvider client={client}>
+        <MikserProvider client={documents}>
             <BrowserRouter>
-                <AppEditor />
+                <AppEditor sitemap={sitemap} />
             </BrowserRouter>
         </MikserProvider>
     </React.StrictMode>,
@@ -291,8 +316,8 @@ import { mapRoute } from './route-mapping.jsx'
  * useMikserRoutes — adding or editing content shows up instantly while
  * editing. Same views the static build uses, resolved at runtime.
  */
-export default function AppEditor() {
-    const routes = useMikserRoutes({ mapRoute })
+export default function AppEditor({ sitemap }) {
+    const routes = useMikserRoutes({ client: sitemap, mapRoute })
     const element = useRoutes(routes)
 
     return (

@@ -87,10 +87,22 @@ const url = (
     typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_MIKSER_URL
 ) || 'http://localhost:3001'
 
-export const client = createClient({ baseUrl: url }).entities('public')
+const root = createClient({ baseUrl: url })
+
+// Full document fetch — used by the catch-all's load() during prerender
+// and by useDocument inside the admin SPA.
+export const documents = root.entities('public')
+
+// Narrow router data — used by entries() during prerender and by the
+// admin SPA's document list. initialUrl points at the static snapshot
+// from the data plugin's catalog.sitemap, so admin first paint is a
+// CDN-cached file read instead of an API roundtrip.
+export const sitemap = root.entities('sitemap', {
+    initialUrl: '/data/sitemap.json',
+})
 ```
 
-**Say:** "One client, two contexts. The `||` chain picks `MIKSER_URL` when running in Node (prerender) and `PUBLIC_MIKSER_URL` when running in the browser (admin SPA). Falls back to localhost in dev."
+**Say:** "Two clients, shared between contexts. `documents` is the full-content client (catch-all's `load()`, admin's `useDocument`). `sitemap` is the narrow router client — small payload, plus a static snapshot for zero-roundtrip admin boot. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
 
 ### 5. `src/lib/route-mapping.js` — shared view dispatch
 
@@ -98,14 +110,29 @@ export const client = createClient({ baseUrl: url }).entities('public')
 import PageView from './views/PageView.svelte'
 import ArticleView from './views/ArticleView.svelte'
 
-export const viewForLayout = {
+// Dispatch by meta.component, not meta.layout — layout is reserved
+// for mikser's SSG render templates (layouts/<name>.hbs etc.);
+// component is the SPA's view dispatch. Documents in Hybrid SSG can
+// set both without collision.
+export const viewForComponent = {
     page: PageView,
     article: ArticleView,
     // Add more: product, landing, etc.
 }
+
+// Resolve URL path: prefer meta.route, fall back to destination.
+export function routeFor(document) {
+    if (document?.meta?.route) return document.meta.route
+    if (document?.destination) {
+        return document.destination
+            .replace(/\/index\.html?$/, '/')
+            .replace(/\.html?$/, '')
+    }
+    return null
+}
 ```
 
-**Say:** "The shared dispatch table. Both the prerender path and the admin SPA import from here. Add a new layout = add an entry + create the view component."
+**Say:** "The shared dispatch table + path resolver. Both the prerender path and the admin SPA import from here. Add a new component = add an entry + create the view component."
 
 ### 6. `src/routes/+layout.svelte`
 
@@ -137,32 +164,45 @@ export const viewForLayout = {
 
 ```js
 // Catch-all dynamic route. SvelteKit calls entries() at build time to
-// know which paths to prerender, then calls load() for each — both run
-// against the mikser catalog.
+// know which paths to prerender, then calls load() for each — both
+// run against the mikser catalog.
 import { generateMikserRoutes } from 'mikser-io-sdk-svelte'
-import { client } from '$lib/mikser.js'
+import { documents, sitemap } from '$lib/mikser.js'
+import { routeFor } from '$lib/route-mapping.js'
 
 export const prerender = true
 
-// Enumerate every published document with a meta.route. SvelteKit will then
-// invoke load() with params.path = document.route minus the leading slash.
+// Enumerate every published, component-having document. entries() runs
+// against the sitemap endpoint — small payload, no full document
+// bodies pulled into the build process.
 export async function entries() {
     const routes = await generateMikserRoutes({
-        client,
-        filter: { 'meta.published': true, 'meta.route': { $exists: true } },
-        mapRoute: document => ({ path: document.meta.route.replace(/^\//, '') }),
+        client: sitemap,
+        mapRoute: document => {
+            const path = routeFor(document)
+            return path ? { path: path.replace(/^\//, '') } : null
+        },
     })
     // The homepage is handled by src/routes/+page.svelte — drop the
     // empty path so we don't collide.
-    return routes.filter(r => r.path !== '')
+    return routes.filter(r => r && r.path !== '')
 }
 
-// Fetch the document for the matched path. params.path is the URL path
-// with the leading '/' stripped; convert back when querying.
+// Fetch the document for the matched path. params.path is the URL
+// path with the leading '/' stripped; we look it up by meta.route OR
+// by a destination prefix so files without explicit meta.route still
+// resolve. Uses documents (full content) — load() bakes the body into
+// the prerendered HTML.
 export async function load({ params }) {
     const target = '/' + params.path
-    const { items } = await client.list({
-        filter: { 'meta.route': target, 'meta.published': true },
+    const { items } = await documents.list({
+        filter: {
+            $or: [
+                { 'meta.route': target },
+                { destination: { $regex: `^${target.replace(/\/$/, '')}(/index)?\\.html?$` } },
+            ],
+            'meta.published': true,
+        },
         limit: 1,
     })
     return { document: items[0] || null }
@@ -175,13 +215,13 @@ export async function load({ params }) {
 
 ```svelte
 <script>
-    import { viewForLayout } from '$lib/route-mapping.js'
+    import { viewForComponent } from '$lib/route-mapping.js'
 
     let { data } = $props()
 
-    // Pick the right view by meta.layout, falling back to PageView.
+    // Pick the right view by meta.component, falling back to PageView.
     const View = $derived(
-        viewForLayout[data.document?.meta?.layout] ?? viewForLayout.page,
+        viewForComponent[data.document?.meta?.component] ?? viewForComponent.page,
     )
 </script>
 
@@ -196,7 +236,7 @@ export async function load({ params }) {
 {/if}
 ```
 
-**Say:** "Picks the view by layout and renders the document. Same pattern as the Pure SPA catch-all; difference is `data.document` comes from a server-side `load()` here (executed at build time during prerender) rather than from a runtime SDK rune."
+**Say:** "Picks the view by component and renders the document. Same pattern as the Pure SPA catch-all; difference is `data.document` comes from a server-side `load()` here (executed at build time during prerender) rather than from a runtime SDK rune."
 
 ### 10. `src/routes/admin/+page.js` — opt out of prerender
 
@@ -212,25 +252,33 @@ export const ssr = false
 ```svelte
 <script>
     import { setMikserClient, useDocuments, useDocument } from 'mikser-io-sdk-svelte'
-    import { client } from '$lib/mikser.js'
-    import { viewForLayout } from '$lib/route-mapping.js'
+    import { documents, sitemap } from '$lib/mikser.js'
+    import { viewForComponent, routeFor } from '$lib/route-mapping.js'
 
-    // The live editor uses the same client, but at runtime (no
-    // prerender). Subscriptions stay open via SSE.
-    setMikserClient(client)
+    // Register the documents client for useDocument below. The sitemap
+    // client is passed explicitly to useDocuments for the list — we
+    // don't need it in context.
+    setMikserClient(documents)
 
     let selectedId = $state(null)
 
-    const all = useDocuments(() => ({
-        filter: { 'meta.published': true, 'meta.route': { $exists: true } },
-        sort: { 'meta.route': 1 },
-        fields: ['id', 'route', 'meta'],
-    }))
+    // List from the sitemap (narrow payload, static-snapshot fast path).
+    // useDocuments gets { client: sitemap } so it doesn't inject the
+    // documents client from context.
+    const all = useDocuments(
+        () => ({
+            filter: { 'meta.published': true, 'meta.component': { $exists: true } },
+            sort: { 'meta.route': 1 },
+            fields: ['id', 'destination', 'meta'],
+        }),
+        { client: sitemap },
+    )
 
+    // Full document fetch (uses the documents client from context).
     const selected = useDocument(() => selectedId)
 
     const View = $derived(
-        viewForLayout[selected.document?.meta?.layout] ?? viewForLayout.page,
+        viewForComponent[selected.document?.meta?.component] ?? viewForComponent.page,
     )
 </script>
 
@@ -242,8 +290,8 @@ export const ssr = false
             {#each all.documents as document (document.id)}
                 <li class:selected={selectedId === document.id}>
                     <button onclick={() => (selectedId = document.id)}>
-                        {document.meta?.title ?? document.route}
-                        <small>{document.meta?.layout}</small>
+                        {document.meta?.title ?? routeFor(document)}
+                        <small>{document.meta?.component}</small>
                     </button>
                 </li>
             {/each}
