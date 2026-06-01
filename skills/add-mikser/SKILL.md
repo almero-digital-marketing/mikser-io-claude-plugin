@@ -236,7 +236,8 @@ Notes on the choices:
 //   documents      — load .md files under documents/
 //   front-matter   — parse YAML front-matter into meta
 //   yaml           — load .yml files (if you add any)
-//   plugin-schemas — validate front-matter against schemas/<layout>.js
+//   plugin-schemas — validate front-matter against schemas/<name>.js
+//   data           — write JSON snapshots of the catalog at finalize
 //   api            — expose the catalog over HTTP with an SSE subscribe stream
 //
 // Note: there's intentionally no render-markdown plugin here. The api
@@ -252,6 +253,7 @@ export default {
         'front-matter',
         'yaml',
         'plugin-schemas',
+        'data',
         'api',
     ],
 
@@ -260,14 +262,53 @@ export default {
         // failing the build — right for active editing. Flip to 'fail'
         // for CI strictness.
         onError: 'warn',
+        // Match schemas by meta.component rather than meta.layout, so
+        // schemas/page.js validates documents with component: 'page'.
+        // This keeps layout reserved for mikser's SSG render pipeline
+        // (and avoids the "layout 'page' not found" warnings that
+        // mikser otherwise logs when a SPA-only component name has no
+        // matching template file).
+        layoutKey: 'meta.component',
+    },
+
+    data: {
+        // Catalog snapshots. The `data` plugin writes one JSON file per
+        // key to <dataFolder>/<key>.json at the finalize phase.
+        catalog: {
+            // The sitemap snapshot is the SPA router's fast-path input.
+            // The SDK's .entities('sitemap', { initialUrl: '/data/sitemap.json' })
+            // reads this file directly on first paint — no API roundtrip,
+            // CDN-cacheable.
+            //
+            // Filter on meta.component so only SPA-routed documents
+            // appear. Other documents (data fragments, includes,
+            // SSG-only pages) are excluded.
+            sitemap: {
+                query: e =>
+                    e.type === 'document' &&
+                    e.meta?.published &&
+                    e.meta?.component,
+                pick: ['id', 'meta', 'destination', 'type'],
+            },
+        },
     },
 
     api: {
         endpoints: {
-            // Open read endpoint with the SSE subscribe operation. The
-            // framework SDK reads from this endpoint by default.
+            // Full-document read endpoint with SSE subscribe. Views fetch
+            // individual documents from here via useDocument(id).
             public: {
                 query: e => e.type === 'document' && e.meta?.published,
+                operations: ['list', 'subscribe'],
+            },
+            // Sitemap endpoint — the router's source of truth. Same
+            // filter as the data plugin's catalog.sitemap above, so the
+            // static snapshot and the live SSE stream stay in sync.
+            sitemap: {
+                query: e =>
+                    e.type === 'document' &&
+                    e.meta?.published &&
+                    e.meta?.component,
                 operations: ['list', 'subscribe'],
             },
         },
@@ -278,15 +319,21 @@ export default {
 ### `mikser-content/schemas/page.js`
 
 ```js
-// Schema for documents with meta.layout: 'page'. Edit to match your domain.
-// The plugin-schemas plugin auto-discovers files in this folder; the file
-// name determines which layout it validates.
+// Schema for documents whose component is 'page'. The plugin-schemas
+// plugin auto-discovers files in this folder; the file name (matching
+// meta.component) determines which documents this schema validates.
+//
+// Note: layout is for mikser's SSG render pipeline (which template file
+// to use). component is for the frontend SPA's view dispatch. Keep them
+// separate so a layout warning from mikser doesn't surprise you when
+// you add a SPA-only document type.
 import { z } from 'zod'
 
 export default z.object({
-    layout:    z.literal('page'),
+    component: z.literal('page'),
     title:     z.string().min(1),
-    route:     z.string().regex(/^\//, 'route must start with "/"'),
+    route:     z.string().regex(/^\//, 'route must start with "/"').optional(),
+    layout:    z.string().optional(),         // mikser SSG layout (optional)
     published: z.boolean(),
 })
 ```
@@ -297,9 +344,10 @@ export default z.object({
 import { z } from 'zod'
 
 export default z.object({
-    layout:     z.literal('article'),
+    component:  z.literal('article'),
     title:      z.string().min(1),
-    route:      z.string().regex(/^\//, 'route must start with "/"'),
+    route:      z.string().regex(/^\//, 'route must start with "/"').optional(),
+    layout:     z.string().optional(),
     author:     z.string().min(1),
     date:       z.coerce.date(),
     summary:    z.string().max(280).optional(),
@@ -311,7 +359,7 @@ export default z.object({
 
 ```markdown
 ---
-layout: page
+component: page
 title: Home
 route: /
 published: true
@@ -321,15 +369,15 @@ Welcome. This document lives as a plain markdown file in
 `mikser-content/documents/index.md`. Edit it while both terminals are
 running and the page updates in place — no rebuild, no refresh.
 
-The frontmatter (`layout`, `title`, `route`, `published`) is validated
-against `mikser-content/schemas/page.js` on every save.
+The frontmatter (`component`, `title`, `route`, `published`) is
+validated against `mikser-content/schemas/page.js` on every save.
 ```
 
 ### `mikser-content/documents/about.md`
 
 ```markdown
 ---
-layout: page
+component: page
 title: About
 route: /about
 published: true
@@ -344,7 +392,7 @@ watch the route disappear from the running app without a rebuild.
 
 ```markdown
 ---
-layout: article
+component: article
 title: Welcome to the journal
 route: /articles/welcome
 author: Editor
@@ -353,13 +401,19 @@ summary: First article — a tour of what gets generated when you scaffold mikse
 published: true
 ---
 
-This document has `meta.layout: article`, so the route renders
+This document has `meta.component: article`, so the route renders
 `ArticleView` instead of `PageView`. The dispatch lives in
 `src/route-mapping.<ext>` (Vue / React) or in the catch-all
-`+page.svelte` (SvelteKit) — add a new layout there and a new schema
-file in `mikser-content/schemas/` and you have a new content type.
+`+page.svelte` (SvelteKit) — add a new component there and a new
+schema file in `mikser-content/schemas/` and you have a new content
+type.
 
-The pattern is the same whether you have two layouts or fifty.
+Notice there's no `layout:` here. `layout` is reserved for mikser's
+SSG render pipeline — which template file to render this document
+through. For Pure SPA you don't need it; for Hybrid SSG add it
+alongside `component`.
+
+The pattern is the same whether you have two components or fifty.
 ```
 
 ## Teaching, not just generating

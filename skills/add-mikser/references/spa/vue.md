@@ -77,35 +77,60 @@ Inside `<div id="app">`, replace whatever's there with:
 ### 4. `src/route-mapping.js`
 
 ```js
-// Map each document's `meta.layout` to the view component that renders it.
-// Add a new layout here when you add a new schema in mikser-content/schemas/.
+// Map each document's `meta.component` to the Vue view that renders it.
+// Add a new entry here when you add a new schema in mikser-content/schemas/.
+//
+// Note: meta.component (this file's dispatch key) is separate from
+// meta.layout (mikser's SSG render template). Layout is the file in
+// mikser-content/layouts/; component is the file in src/views/. Keeping
+// them separate avoids "layout 'page' not found" warnings from mikser
+// when a SPA-only component has no matching template.
 import PageView from './views/PageView.vue'
 import ArticleView from './views/ArticleView.vue'
 import NotFound from './views/NotFound.vue'
 
-const viewForLayout = {
+const viewForComponent = {
     page: PageView,
     article: ArticleView,
 }
 
-// useMikserRoutes calls this for every document. Return a vue-router route
-// object — or null/undefined to skip the document. The SDK uses `name` as
-// the key for adding/removing routes as the catalog changes, so include it.
+// Resolve the URL path for a document. Prefer the explicit meta.route;
+// fall back to the entity's destination (mikser computes this from the
+// source path + cleanUrls). Returns null to skip documents that have
+// neither — useful for fragments / data files / unrouted entities.
+function routeFor(doc) {
+    if (doc.meta?.route) return doc.meta.route
+    if (doc.destination) {
+        return doc.destination
+            .replace(/\/index\.html?$/, '/')
+            .replace(/\.html?$/, '')
+    }
+    return null
+}
+
+// useMikserRoutes calls this for every document in the sitemap stream.
+// Return a vue-router route object — or null/undefined to skip. The SDK
+// uses `name` as the key for adding/removing routes as the catalog
+// changes, so include it.
 export function mapRoute(doc) {
-    const component = viewForLayout[doc.meta?.layout] ?? NotFound
+    const path = routeFor(doc)
+    if (!path) return null
+    const component = viewForComponent[doc.meta?.component] ?? NotFound
     return {
         name: doc.id,
-        path: doc.meta.route,
+        path,
         component,
-        // Pass the live document into the view as a `doc` prop so the view
-        // doesn't have to look it up again.
-        props: { doc },
-        meta: { docId: doc.id },
+        // The view receives only the entityId and fetches the full
+        // document via useDocument — keeps the sitemap snapshot lean
+        // (id + meta + destination, no content) and lets each view
+        // subscribe to its own document for live updates.
+        props: { entityId: doc.id },
+        meta: { docId: doc.id, component: doc.meta?.component, title: doc.meta?.title },
     }
 }
 ```
 
-**Say:** "This is the dispatch point. `meta.layout: 'article'` in a markdown file lands here and picks `ArticleView`. Adding a new layout = one entry here + one schema file. The `name: doc.id` is what lets the SDK track each route across SSE updates."
+**Say:** "Two changes from a naive map. First, dispatch is on `meta.component`, not `meta.layout` — layout is reserved for mikser's SSG render pipeline so the two don't collide. Second, the route path falls back to `doc.destination` when `meta.route` isn't explicit — so a markdown file's URL can come from its filesystem position without an extra front-matter field. Adding a new component = one entry in `viewForComponent` + one schema file."
 
 ### 5. `src/markdown.js`
 
@@ -132,18 +157,25 @@ export function renderMarkdown(source) {
 ```vue
 <script setup>
 import { computed } from 'vue'
+import { useDocument } from 'mikser-io-sdk-vue'
 import { renderMarkdown } from '../markdown.js'
 
-const props = defineProps({ doc: { type: Object, required: true } })
+const props = defineProps({ entityId: { type: String, required: true } })
 
-// `computed` re-runs when the live `doc` prop changes — markdown edits
-// push through SSE → router updates the prop → this re-renders.
-const html = computed(() => renderMarkdown(props.doc.content))
+// useDocument fetches the full document by id from the `public`
+// endpoint. The sitemap router knows only id + meta + destination;
+// the full body comes from here. Live: SSE pushes a new revision
+// → this composable's `document` ref updates → html re-renders.
+const { document } = useDocument(() => props.entityId)
+
+const html = computed(() =>
+    document.value ? renderMarkdown(document.value.content) : '',
+)
 </script>
 
 <template>
-    <article class="page">
-        <h1>{{ doc.meta.title }}</h1>
+    <article v-if="document" class="page">
+        <h1>{{ document.meta?.title }}</h1>
         <div v-html="html" />
     </article>
 </template>
@@ -153,27 +185,31 @@ const html = computed(() => renderMarkdown(props.doc.content))
 </style>
 ```
 
-**Say:** "Generic page view — your fallback. The `doc` prop is the live document; edits push here automatically over SSE and `computed` re-converts the body. `v-html` injects the markdown-it output."
+**Say:** "Generic page view — your fallback. `useDocument(() => props.entityId)` fetches the full document from the public endpoint and stays subscribed: edit the markdown file and the body re-renders without a refresh. The router only needs the id from the sitemap snapshot; this view does the full fetch."
 
 ### 7. `src/views/ArticleView.vue`
 
 ```vue
 <script setup>
 import { computed } from 'vue'
+import { useDocument } from 'mikser-io-sdk-vue'
 import { renderMarkdown } from '../markdown.js'
 
-const props = defineProps({ doc: { type: Object, required: true } })
-const html = computed(() => renderMarkdown(props.doc.content))
+const props = defineProps({ entityId: { type: String, required: true } })
+const { document } = useDocument(() => props.entityId)
+const html = computed(() =>
+    document.value ? renderMarkdown(document.value.content) : '',
+)
 </script>
 
 <template>
-    <article class="article">
+    <article v-if="document" class="article">
         <header>
-            <h1>{{ doc.meta.title }}</h1>
+            <h1>{{ document.meta?.title }}</h1>
             <p class="byline">
-                By {{ doc.meta.author }} ·
-                <time :datetime="doc.meta.date">
-                    {{ new Date(doc.meta.date).toLocaleDateString() }}
+                By {{ document.meta?.author }} ·
+                <time :datetime="document.meta?.date">
+                    {{ new Date(document.meta?.date).toLocaleDateString() }}
                 </time>
             </p>
         </header>
@@ -187,7 +223,7 @@ const html = computed(() => renderMarkdown(props.doc.content))
 </style>
 ```
 
-**Say:** "Layout-specific view. The article schema requires `author` and `date`, so this view can rely on them being present."
+**Say:** "Component-specific view. The article schema requires `author` and `date`, so this view can rely on them once the document loads. Same `useDocument` pattern as PageView."
 
 ### 8. `src/views/NotFound.vue`
 
@@ -224,10 +260,21 @@ import NotFound from './views/NotFound.vue'
 import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const client = createClient({ baseUrl: mikserUrl }).entities('public')
+const root = createClient({ baseUrl: mikserUrl })
+
+// Two clients, two purposes:
+//   - documents  → full content fetch from the `public` endpoint
+//                  (used by useDocument inside views)
+//   - sitemap    → narrow router data from the `sitemap` endpoint,
+//                  with a static snapshot at /data/sitemap.json for
+//                  zero-roundtrip first paint
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', {
+    initialUrl: '/data/sitemap.json',
+})
 
 const app = createApp(App)
-app.use(createMikserPlugin({ client }))
+app.use(createMikserPlugin({ client: documents }))
 
 const router = createRouter({
     history: createWebHistory(),
@@ -237,10 +284,10 @@ const router = createRouter({
 })
 app.use(router)
 
-// Subscribe to mikser routes. Routes appear after the first SSE batch.
-// We don't await `seeded` — App.vue gates RouterView on useMikserStatus
-// (called inside the App component) so the page never hangs silently.
-const { seeded } = useMikserRoutes(router, { client, mapRoute })
+// Hand the sitemap client to useMikserRoutes — it produces routes
+// directly from the static snapshot on first paint (no API roundtrip),
+// then keeps the route list in sync via SSE on the sitemap endpoint.
+const { seeded } = useMikserRoutes(router, { client: sitemap, mapRoute })
 
 // Re-resolve the current URL after the SDK has populated routes, so
 // the just-added route renders without flicker.
@@ -261,20 +308,22 @@ import { router } from './router.js'  // their existing router
 import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const client = createClient({ baseUrl: mikserUrl }).entities('public')
+const root = createClient({ baseUrl: mikserUrl })
+const documents = root.entities('public')
+const sitemap = root.entities('sitemap', { initialUrl: '/data/sitemap.json' })
 
 const app = createApp(App)
-app.use(createMikserPlugin({ client }))
+app.use(createMikserPlugin({ client: documents }))
 app.use(router)
 
-const { seeded } = useMikserRoutes(router, { client, mapRoute })
+const { seeded } = useMikserRoutes(router, { client: sitemap, mapRoute })
 seeded.then(() => router.replace(router.currentRoute.value.fullPath))
 
 app.provide('mikserUrl', mikserUrl)
 app.mount('#app')
 ```
 
-**Say (both variants):** "Two-call client setup: `createClient({ baseUrl })` → root client; `.entities('public')` → the entities client the SDK uses. `createMikserPlugin({ client })` registers it for composables called *inside components* (where Vue's `inject()` works). At module scope here in `main.js` we're outside any component setup context — so we pass `client` explicitly to `useMikserRoutes(router, { client, mapRoute })`. Inside `App.vue`'s `<script setup>` we don't need to: `useMikserStatus()` injects the client via the plugin. We mount immediately — App.vue uses `useMikserStatus` to decide whether to render `<RouterView />`, a connecting panel, or an unreachable error. No more await-seeded-before-mount, no more forever-loading screens."
+**Say (both variants):** "Two clients now: `documents` (public endpoint, full content for `useDocument`) and `sitemap` (narrow endpoint, with a static snapshot at `/data/sitemap.json` for zero-roundtrip first paint). `createMikserPlugin({ client: documents })` registers the document client for composables inside components. `useMikserRoutes(router, { client: sitemap, mapRoute })` uses the sitemap client — routes appear immediately from the snapshot, then SSE keeps them in sync. The sitemap's filter (`meta.component`) is the load-bearing convention: only documents with a component end up as routes."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
