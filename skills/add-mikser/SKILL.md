@@ -291,7 +291,7 @@ export default {
                     e.type === 'document' &&
                     e.meta?.published &&
                     e.meta?.component,
-                pick: ['id', 'destination', 'meta'],
+                pick: ['id', 'destination', 'meta.component', 'meta.route', 'meta.title'],
             },
         },
     },
