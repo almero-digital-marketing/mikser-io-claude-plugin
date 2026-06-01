@@ -274,13 +274,17 @@ export default {
         endpoints: {
             // Full-document read endpoint with SSE subscribe. Views
             // fetch individual documents from here via useDocument(id).
-            // Stays uncached on purpose: per-id fetches are small on
-            // their own, and broad list calls against this endpoint
-            // would dump the whole catalog into a single cache file.
-            // The sitemap endpoint below is the narrow, cached one.
+            // Returns the whole entity (no projection). `cache: true`
+            // is for fail-safety: when mikser is down, a reverse proxy
+            // serves the cached per-id responses so a user reading a
+            // document keeps reading it. Caveat: broad list calls
+            // (no filter) would dump the whole catalog into a single
+            // cache file — use the sitemap endpoint below for routing-
+            // shaped queries.
             public: {
                 query: e => e.type === 'document' && e.meta?.published,
                 operations: ['list', 'subscribe'],
+                cache: true,
             },
             // Sitemap — the router's source of truth. Narrow filter
             // (only documents with meta.component) plus an explicit
