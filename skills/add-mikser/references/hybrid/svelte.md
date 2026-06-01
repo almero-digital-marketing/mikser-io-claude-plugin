@@ -93,7 +93,7 @@ const url = (
 // back to a fresh list() call. The admin SPA's live SSE subscribe
 // runs on the same /public endpoint.
 export const documents = createClient({ baseUrl: url })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 ```
 
 **Say:** "One client, shared between contexts. The catch-all's `load()` and admin's `useDocument` both read it; the prerender `entries()` and admin's document list both list against it. `data.catalog` pulls the static snapshot the data plugin wrote, so first paint and prerender enumeration are both fast and CDN-cacheable. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."

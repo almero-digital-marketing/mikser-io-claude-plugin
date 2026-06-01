@@ -242,7 +242,7 @@ import App from './App.jsx'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -267,7 +267,7 @@ import App from './App.jsx'  // their existing tree, with its router inside
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -278,7 +278,7 @@ createRoot(document.getElementById('root')).render(
 )
 ```
 
-**Say (both variants):** "One client. `data: { catalog: 'sitemap' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. `MikserProvider` registers it for every hook in the tree, including `useMikserRoutes`. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
+**Say (both variants):** "One client. `data: { catalog: 'sitemap', entities: 'page' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. `MikserProvider` registers it for every hook in the tree, including `useMikserRoutes`. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
 
 ### 10. `src/App.jsx`
 
@@ -396,7 +396,7 @@ The diff from Mode 1 is small but every layer changes:
 | File | Mode 1 | Mode 2 |
 |---|---|---|
 | `mikser.config.js` | `data.catalog.sitemap` block present | Remove the block — no snapshot |
-| `src/main.jsx` | `entities('public', { data: { catalog: 'sitemap' } })` | Plain `entities('public')` |
+| `src/main.jsx` | `entities('public', { data: { catalog: 'sitemap', entities: 'page' } })` | Plain `entities('public')` |
 | `src/App.jsx` | `useMikserRoutes` + `useRoutes` | Hand-coded `<Route>`s + one `<Route path="*">` catch-all |
 | `src/route-mapping.jsx` | `mapRoute(document)` | Not needed — dispatch inside the catch-all view |
 

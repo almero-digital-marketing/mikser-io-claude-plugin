@@ -41,10 +41,10 @@ import { PUBLIC_MIKSER_URL } from '$env/static/public'
 // on the same /public endpoint for incremental updates. No second
 // API endpoint, no second cache file.
 export const documents = createClient({ baseUrl: PUBLIC_MIKSER_URL })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 ```
 
-**Say:** "One client. `data: { catalog: 'sitemap' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps it current. Connection config (auth headers, fetch override) lives once on the client."
+**Say:** "One client. `data: { catalog: 'sitemap', entities: 'page' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps it current. Connection config (auth headers, fetch override) lives once on the client."
 
 ### 3. `src/routes/+layout.svelte` — register the client + connection guard
 

@@ -138,7 +138,7 @@ const MIKSER_URL = process.env.MIKSER_URL || 'http://localhost:3001'
 // (out/data/sitemap.json) — generateMikserRoutes consults it before
 // falling back to a fresh list() call.
 const client = createClient({ baseUrl: MIKSER_URL })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 
 function routeFor(d) {
     if (d.meta?.route) return d.meta.route
@@ -297,7 +297,7 @@ const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
 // writes (out/data/sitemap.json) on first paint, then live SSE keeps
 // it current.
 const documents = createClient({ baseUrl: MIKSER_URL })
-    .entities('public', { data: { catalog: 'sitemap' } })
+    .entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>

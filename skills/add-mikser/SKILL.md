@@ -276,18 +276,17 @@ export default {
     },
 
     data: {
-        // The data plugin writes JSON snapshots at finalize. We use it
-        // to publish a single sitemap.json file the SPA loads on first
-        // paint — no second API endpoint, no SSE channel needed for
-        // routing data.
+        // The data plugin is mikser's static-content essence. Every
+        // catalog and entity configured here lands as a JSON file
+        // under out/data/, served by the built-in static handler. The
+        // SDK reads from these files first before falling back to the
+        // API — first paint is on-disk, no API round-trip required.
         catalog: {
             // out/data/sitemap.json — every published document that
             // declares a meta.component, projected to just the fields
-            // the router needs (`pick`). Served by mikser's built-in
-            // static handler, CDN-cacheable, survives mikser being
-            // down. Consumed by the SDK via
-            //   entities('public', { data: { catalog: 'sitemap' } })
-            // which unwraps the data-plugin envelope automatically.
+            // the router needs (`pick`). CDN-cacheable, survives
+            // mikser being down. Consumed by the SDK via
+            //   entities('public', { data: { catalog: 'sitemap', entities: 'page' } })
             sitemap: {
                 query: e =>
                     e.type === 'document' &&
@@ -296,16 +295,28 @@ export default {
                 pick: ['id', 'destination', 'meta.component', 'meta.route', 'meta.title'],
             },
         },
+        entities: {
+            // out/data/<entity.name>.page.json — one file per published
+            // document, with full content. Consumed by the SDK via
+            // the matching `data.entities: 'page'` so useDocument(id)
+            // reads from disk on first paint instead of hitting the
+            // API. Live updates still flow over SSE.
+            page: {
+                query: e => e.type === 'document' && e.meta?.published,
+                pick: ['id', 'meta', 'content'],
+            },
+        },
     },
 
     api: {
         endpoints: {
-            // Single full-document endpoint with SSE subscribe. Views
-            // fetch individual documents from here via useDocument(id).
-            // `cache: true` is for fail-safety: when mikser is down a
-            // reverse proxy serves the cached per-id responses so a
-            // reader keeps reading. Routing data comes from the static
-            // sitemap.json above, not from this endpoint.
+            // Single full-document endpoint with SSE subscribe. The
+            // data plugin's per-entity files cover the per-id fast
+            // path for first paint; this endpoint exists for live
+            // updates (SSE) and for the fallback when a doc isn't in
+            // the static files yet. `cache: true` is fail-safety:
+            // when mikser is down a reverse proxy serves cached
+            // per-id responses transparently.
             public: {
                 query: e => e.type === 'document' && e.meta?.published,
                 operations: ['list', 'subscribe'],
