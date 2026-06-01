@@ -94,11 +94,12 @@ const root = createClient({ baseUrl: url })
 export const documents = root.entities('public')
 
 // Narrow router data — used by entries() during prerender and by the
-// admin SPA's document list. initialUrl points at the static snapshot
-// from the data plugin's catalog.sitemap, so admin first paint is a
-// CDN-cached file read instead of an API roundtrip.
+// admin SPA's document list. initialUrl points at the api plugin's
+// cached output (mikser-io ^6.24.0, sitemap endpoint cache: true).
+// Static file, CDN-cacheable, survives mikser outages via reverse
+// proxy fallback. SSE keeps the admin SPA's view in sync once live.
 export const sitemap = root.entities('sitemap', {
-    initialUrl: '/data/sitemap.json',
+    initialUrl: '/api/sitemap/entities.json',
 })
 ```
 

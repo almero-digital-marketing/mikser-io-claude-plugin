@@ -270,7 +270,7 @@ const root = createClient({ baseUrl: mikserUrl })
 //                  zero-roundtrip first paint
 const documents = root.entities('public')
 const sitemap = root.entities('sitemap', {
-    initialUrl: '/data/sitemap.json',
+    initialUrl: '/api/sitemap/entities.json',
 })
 
 const app = createApp(App)
@@ -310,7 +310,7 @@ import App from './App.vue'
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', { initialUrl: '/data/sitemap.json' })
+const sitemap = root.entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })
 
 const app = createApp(App)
 app.use(createMikserPlugin({ client: documents }))

@@ -36,6 +36,25 @@ Every architecture the skill scaffolds includes live SSE support — just applie
 
 The mechanism is identical across all three: `mikser-content`'s `api` plugin exposes a `/subscribe` SSE endpoint, [`mikser-io-sdk-api`](https://github.com/almero-digital-marketing/mikser-io-sdk-api)'s `client.live()` subscribes to it, and the framework SDKs (`useDocument` / `useDocuments` / `useMikserRoutes` / `useMikserStatus`) wrap that into reactive primitives. Even the connection guard ("Can't reach mikser backend") is live — if the backend comes back up while the page is open, the next probe sees it and the guard clears.
 
+**Static cache for fast first paint + outage resilience.** The api plugin's `cache: true` option (mikser-io ^6.24.0) writes the default response of an endpoint to `out/<basePath>/<endpoint>/entities.json` on every catalog change. Two consumers benefit:
+
+1. The SDK's `entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })` reads it directly for zero-roundtrip first paint — list data is in memory before the API would have responded.
+2. A reverse proxy serves it as static fallback when mikser itself is down — the frontend keeps working through outages (list reads only; SSE is necessarily live-only). nginx pattern:
+
+```
+location /api/sitemap/entities {
+    proxy_pass http://localhost:3001;
+    proxy_intercept_errors on;
+    error_page 502 503 504 = @cache;
+}
+location @cache {
+    root /var/www/out;
+    try_files /api/sitemap/entities.json =502;
+}
+```
+
+The SPA's connection guard still triggers if the live backend is unreachable from the browser — but with the cache in place, the user lands on real content first and the guard only surfaces if they try to mutate or navigate to a non-cached resource.
+
 What is **not** live in any architecture:
 
 - **Hybrid SSG public-side routes** — those come from a build-time manifest. New documents need a rebuild + redeploy to appear on the public site. The editor sees them immediately via SSE.

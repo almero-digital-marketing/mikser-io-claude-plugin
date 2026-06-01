@@ -216,7 +216,7 @@ out
         "preview": "node node_modules/mikser-io/app.js --server"
     },
     "dependencies": {
-        "mikser-io": "^6.23.1",
+        "mikser-io": "^6.24.0",
         "mikser-io-plugin-schemas": "^0.1.0",
         "zod": "^3.23.0"
     }
@@ -225,9 +225,9 @@ out
 
 Notes on the choices:
 
-- **No `mikser-io-render-markdown`.** That plugin is a template-engine helper (it extends `runtime.markdown()` for hbs / eta / liquid renderers) — it does *not* convert document bodies to HTML before the API serves them. The API serves `doc.content` as raw markdown, and the SPA renders that to HTML client-side via `markdown-it`. (See the framework references — each one installs `markdown-it` as a peer dep and uses it in the view components.) If the user later moves to SSG output, the render-markdown plugin becomes relevant; for the live-SPA shape it's the wrong tool.
-- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. The bin works in the latest mikser-io but invoking via `node` is portable across installed versions and survives any future PATH/permission quirks. Once the project is established the user can shorten this if they want.
-- **`mikser-io ^6.23.1`** is the currently-published floor. The version's bin entry has a known shebang quirk — the `node node_modules/mikser-io/app.js` script form above sidesteps it entirely.
+- **No `mikser-io-render-markdown`.** That plugin is a template-engine helper (it extends `runtime.markdown()` for hbs / eta / liquid renderers) — it does *not* convert document bodies to HTML before the API serves them. The API serves `doc.content` as raw markdown, and the SPA renders that to HTML client-side via `markdown-it`. If the user later moves to SSG output, the render-markdown plugin becomes relevant; for the live-SPA shape it's the wrong tool.
+- **Scripts call `node node_modules/mikser-io/app.js` directly** rather than the `mikser` bin. Portable across installed versions, survives any future PATH/permission quirks. Once the project is established the user can shorten this if they want.
+- **`mikser-io ^6.24.0`** is required for the api plugin's `cache: true` option that backs the SDK's `initialUrl` fast path. Without it, fall back to running the `data` plugin (see comment block below for that pattern).
 
 ### `mikser-content/mikser.config.js`
 
@@ -253,7 +253,6 @@ export default {
         'front-matter',
         'yaml',
         'plugin-schemas',
-        'data',
         'api',
     ],
 
@@ -271,28 +270,6 @@ export default {
         layoutKey: 'meta.component',
     },
 
-    data: {
-        // Catalog snapshots. The `data` plugin writes one JSON file per
-        // key to <dataFolder>/<key>.json at the finalize phase.
-        catalog: {
-            // The sitemap snapshot is the SPA router's fast-path input.
-            // The SDK's .entities('sitemap', { initialUrl: '/data/sitemap.json' })
-            // reads this file directly on first paint — no API roundtrip,
-            // CDN-cacheable.
-            //
-            // Filter on meta.component so only SPA-routed documents
-            // appear. Other documents (data fragments, includes,
-            // SSG-only pages) are excluded.
-            sitemap: {
-                query: e =>
-                    e.type === 'document' &&
-                    e.meta?.published &&
-                    e.meta?.component,
-                pick: ['id', 'meta', 'destination', 'type'],
-            },
-        },
-    },
-
     api: {
         endpoints: {
             // Full-document read endpoint with SSE subscribe. Views fetch
@@ -301,15 +278,25 @@ export default {
                 query: e => e.type === 'document' && e.meta?.published,
                 operations: ['list', 'subscribe'],
             },
-            // Sitemap endpoint — the router's source of truth. Same
-            // filter as the data plugin's catalog.sitemap above, so the
-            // static snapshot and the live SSE stream stay in sync.
+            // Sitemap endpoint — the router's source of truth. Filter
+            // by meta.component so only SPA-routed documents appear.
+            //
+            // `cache: true` (mikser-io ^6.24.0) writes the default GET
+            // response to <out>/api/sitemap/entities.json on every
+            // catalog change. Two consumers:
+            //   - SDK initialUrl reads it directly for zero-roundtrip
+            //     first paint
+            //   - reverse proxy serves it as static fallback when the
+            //     live mikser API is down — your frontend keeps working
+            //     through outages (list reads only; SSE is necessarily
+            //     live-only)
             sitemap: {
                 query: e =>
                     e.type === 'document' &&
                     e.meta?.published &&
                     e.meta?.component,
                 operations: ['list', 'subscribe'],
+                cache: true,
             },
         },
     },

@@ -256,8 +256,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 // Build-time uses the sitemap endpoint — it's filtered to documents
 // with meta.component (i.e. things the SPA actually routes), and the
-// data plugin has already written /data/sitemap.json that the public
-// runtime reads. Same shape, two consumers.
+// api plugin has cached /api/sitemap/entities.json that the editor
+// runtime reads. Same content, two consumers.
 const sitemap = createClient({ baseUrl: process.env.MIKSER_URL ?? 'http://localhost:3001' })
     .entities('sitemap')
 
@@ -373,7 +373,7 @@ const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
 const sitemap = root.entities('sitemap', {
-    initialUrl: '/data/sitemap.json',
+    initialUrl: '/api/sitemap/entities.json',
 })
 
 // The editor app owns its own router. Hand-coded admin routes are

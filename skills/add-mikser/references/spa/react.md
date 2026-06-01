@@ -244,7 +244,7 @@ const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
 const sitemap = root.entities('sitemap', {
-    initialUrl: '/data/sitemap.json',
+    initialUrl: '/api/sitemap/entities.json',
 })
 
 createRoot(document.getElementById('root')).render(
@@ -271,7 +271,7 @@ import App from './App.jsx'  // their existing tree, with its router inside
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const root = createClient({ baseUrl: mikserUrl })
 const documents = root.entities('public')
-const sitemap = root.entities('sitemap', { initialUrl: '/data/sitemap.json' })
+const sitemap = root.entities('sitemap', { initialUrl: '/api/sitemap/entities.json' })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>

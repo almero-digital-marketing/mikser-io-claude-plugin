@@ -42,15 +42,17 @@ const root = createClient({ baseUrl: PUBLIC_MIKSER_URL })
 export const documents = root.entities('public')
 
 // Narrow router data — used by the catch-all to find the document for
-// the current URL. initialUrl points at the static snapshot written by
-// the data plugin's catalog.sitemap config. First paint is zero-roundtrip;
-// SSE then keeps the sitemap in sync.
+// the current URL. initialUrl points at the cached file the api plugin
+// writes on every catalog change (mikser-io ^6.24.0, sitemap endpoint
+// has cache: true). First paint reads the static file directly — no
+// API roundtrip, CDN-cacheable, and a reverse proxy can serve it as
+// failover when mikser is down. SSE keeps the sitemap in sync after.
 export const sitemap = root.entities('sitemap', {
-    initialUrl: '/data/sitemap.json',
+    initialUrl: '/api/sitemap/entities.json',
 })
 ```
 
-**Say:** "Two clients, one root. `documents` is the full-content client (used by `useDocument` for view bodies). `sitemap` is the narrow router client — its `initialUrl` points at the static snapshot from the data plugin, so the router's first paint is a CDN-cached file read, not an API roundtrip. Both share the same root, so the connection (auth headers, fetch override, etc.) is configured once."
+**Say:** "Two clients, one root. `documents` is the full-content client (used by `useDocument` for view bodies). `sitemap` is the narrow router client — its `initialUrl` points at the api plugin's cached output file, so first paint reads a static file (CDN-cacheable, survives mikser outages via reverse proxy fallback) instead of hitting the live API. Both clients share the same root, so connection config (auth headers, fetch override, etc.) is set once."
 
 ### 3. `src/routes/+layout.svelte` — register the client + connection guard
 
