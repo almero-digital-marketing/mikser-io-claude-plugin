@@ -272,35 +272,38 @@ export default {
 
     api: {
         endpoints: {
-            // Full-document read endpoint with SSE subscribe. Views fetch
-            // individual documents from here via useDocument(id).
+            // Full-document read endpoint with SSE subscribe. Views
+            // fetch individual documents from here via useDocument(id).
+            // Stays uncached on purpose: per-id fetches are small on
+            // their own, and broad list calls against this endpoint
+            // would dump the whole catalog into a single cache file.
+            // The sitemap endpoint below is the narrow, cached one.
             public: {
                 query: e => e.type === 'document' && e.meta?.published,
                 operations: ['list', 'subscribe'],
             },
-            // Sitemap endpoint — the router's source of truth. Filter
-            // by meta.component so only SPA-routed documents appear.
+            // Sitemap — the router's source of truth. Narrow filter
+            // (only documents with meta.component) plus an explicit
+            // `fields` projection keeps the response tiny: one entry
+            // per route with just the data the SPA needs to dispatch.
             //
-            // `cache: true` (mikser-io ^6.25.1) writes every GET
-            // /entities response to disk, keyed by the request URL's
-            // query string. The reverse proxy fails over to the cached
-            // file when mikser is down — same URL, transparent to the
-            // SDK. List reads survive outages; SSE is necessarily
-            // live-only. See plugins.md "Per-query disk cache" in the
-            // mikser-io docs for the nginx config.
+            // This is the load-time fix. Without it the SPA would
+            // boot by fetching the whole public catalog (every
+            // markdown body, every meta field) to build a route
+            // table — easily megabytes on a real site. With it,
+            // first paint is one small JSON file.
+            //
+            // `cache: true` (mikser-io ^6.25.1+) writes every GET
+            // response to disk. A reverse proxy fails over to the
+            // cached file when mikser is down — same URL, transparent
+            // to the SDK. See plugins.md "Per-query disk cache" for
+            // the nginx config.
             sitemap: {
                 query: e =>
                     e.type === 'document' &&
                     e.meta?.published &&
                     e.meta?.component,
                 operations: ['list', 'subscribe'],
-                // Server-enforced projection — REQUIRED when cache: true
-                // is set on a public endpoint. Without it, every cached
-                // file under out/api/sitemap/entities/ contains the FULL
-                // entity (markdown body, internal uri, stamps, every
-                // meta field), served at a static URL anyone can hit.
-                // Listing the safe fields explicitly here is the
-                // load-bearing privacy control.
                 fields: [
                     'id',
                     'destination',
