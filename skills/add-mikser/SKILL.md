@@ -216,7 +216,7 @@ out
         "preview": "node node_modules/mikser-io/app.js --server"
     },
     "dependencies": {
-        "mikser-io": "^6.25.1",
+        "mikser-io": "^6.26.0",
         "mikser-io-plugin-schemas": "^0.1.0",
         "zod": "^3.23.0"
     }
@@ -294,6 +294,20 @@ export default {
                     e.meta?.published &&
                     e.meta?.component,
                 operations: ['list', 'subscribe'],
+                // Server-enforced projection — REQUIRED when cache: true
+                // is set on a public endpoint. Without it, every cached
+                // file under out/api/sitemap/entities/ contains the FULL
+                // entity (markdown body, internal uri, stamps, every
+                // meta field), served at a static URL anyone can hit.
+                // Listing the safe fields explicitly here is the
+                // load-bearing privacy control.
+                fields: [
+                    'id',
+                    'destination',
+                    'meta.route',
+                    'meta.component',
+                    'meta.title',
+                ],
                 cache: true,
             },
         },
