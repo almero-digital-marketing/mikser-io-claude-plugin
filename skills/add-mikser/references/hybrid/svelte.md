@@ -87,16 +87,16 @@ const url = (
     typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_MIKSER_URL
 ) || 'http://localhost:3001'
 
-// One client. `initialUrl` points at the static snapshot the data
+// One client. `data.catalog` points at the static snapshot the data
 // plugin writes (out/data/sitemap.json) — the SDK loads it on first
 // paint and `listAll()` during prerender consults it before falling
 // back to a fresh list() call. The admin SPA's live SSE subscribe
 // runs on the same /public endpoint.
 export const documents = createClient({ baseUrl: url })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 ```
 
-**Say:** "One client, shared between contexts. The catch-all's `load()` and admin's `useDocument` both read it; the prerender `entries()` and admin's document list both list against it. `initialUrl` pulls the static snapshot the data plugin wrote, so first paint and prerender enumeration are both fast and CDN-cacheable. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
+**Say:** "One client, shared between contexts. The catch-all's `load()` and admin's `useDocument` both read it; the prerender `entries()` and admin's document list both list against it. `data.catalog` pulls the static snapshot the data plugin wrote, so first paint and prerender enumeration are both fast and CDN-cacheable. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
 
 ### 5. `src/lib/route-mapping.js` — shared view dispatch
 
@@ -168,7 +168,7 @@ export const prerender = true
 
 // Enumerate every published, component-having document.
 // generateMikserRoutes calls listAll(), which consults the
-// `initialUrl` snapshot ($lib/mikser.js → /data/sitemap.json) before
+// `data.catalog` snapshot ($lib/mikser.js → /data/sitemap.json) before
 // falling back to a fresh list() — so the build doesn't drag markdown
 // bodies through.
 export async function entries() {
@@ -251,7 +251,7 @@ export const ssr = false
     import { documents } from '$lib/mikser.js'
     import { viewForComponent, routeFor } from '$lib/route-mapping.js'
 
-    // One client. initialUrl in $lib/mikser.js points it at the static
+    // One client. data.catalog in $lib/mikser.js points it at the static
     // data-plugin snapshot, so the list below fills from disk on first
     // paint without an API roundtrip; live SSE keeps it current.
     setMikserClient(documents)

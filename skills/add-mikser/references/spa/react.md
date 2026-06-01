@@ -227,7 +227,7 @@ The pattern: render React immediately, mount `MikserProvider` so hooks have a cl
 
 Preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
-One client. `initialUrl` points at the static snapshot the `data` plugin writes (`out/data/sitemap.json`) — the SDK loads it on first paint (CDN-cacheable, no API roundtrip), then opens a live SSE subscribe on the same `/public` endpoint for incremental updates.
+One client. `data.catalog` points at the static snapshot the `data` plugin writes (`out/data/sitemap.json`) — the SDK loads it on first paint (CDN-cacheable, no API roundtrip), then opens a live SSE subscribe on the same `/public` endpoint for incremental updates.
 
 #### Variant A — user has no existing router
 
@@ -242,7 +242,7 @@ import App from './App.jsx'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -267,7 +267,7 @@ import App from './App.jsx'  // their existing tree, with its router inside
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
@@ -278,7 +278,7 @@ createRoot(document.getElementById('root')).render(
 )
 ```
 
-**Say (both variants):** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. `MikserProvider` registers it for every hook in the tree, including `useMikserRoutes`. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
+**Say (both variants):** "One client. `data: { catalog: 'sitemap' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. `MikserProvider` registers it for every hook in the tree, including `useMikserRoutes`. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
 
 ### 10. `src/App.jsx`
 
@@ -304,7 +304,7 @@ export default function App({ mikserUrl }) {
     const status = useMikserStatus()
 
     // useMikserRoutes reads the default client from MikserProvider —
-    // the one configured with initialUrl in main.jsx. First paint loads
+    // the one configured with data.catalog in main.jsx. First paint loads
     // from the static /data/sitemap.json snapshot; SSE deltas keep the
     // route table current. When the snapshot is served by a CDN or a
     // reverse proxy in front of mikser, route enumeration survives
@@ -396,7 +396,7 @@ The diff from Mode 1 is small but every layer changes:
 | File | Mode 1 | Mode 2 |
 |---|---|---|
 | `mikser.config.js` | `data.catalog.sitemap` block present | Remove the block — no snapshot |
-| `src/main.jsx` | `entities('public', { initialUrl: '/data/sitemap.json' })` | Plain `entities('public')` |
+| `src/main.jsx` | `entities('public', { data: { catalog: 'sitemap' } })` | Plain `entities('public')` |
 | `src/App.jsx` | `useMikserRoutes` + `useRoutes` | Hand-coded `<Route>`s + one `<Route path="*">` catch-all |
 | `src/route-mapping.jsx` | `mapRoute(document)` | Not needed — dispatch inside the catch-all view |
 
@@ -413,7 +413,7 @@ import App from './App.jsx'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 
-// No initialUrl. Cold routes resolve per-navigation via the per-query
+// No data.catalog. Cold routes resolve per-navigation via the per-query
 // disk cache (cache: true on the public endpoint).
 const documents = createClient({ baseUrl: mikserUrl })
     .entities('public')

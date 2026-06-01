@@ -134,11 +134,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIKSER_URL = process.env.MIKSER_URL || 'http://localhost:3001'
 
 // Build-time uses the same single client as the runtime editor.
-// `initialUrl` points at the static snapshot the data plugin writes
+// `data.catalog` points at the static snapshot the data plugin writes
 // (out/data/sitemap.json) — generateMikserRoutes consults it before
 // falling back to a fresh list() call.
 const client = createClient({ baseUrl: MIKSER_URL })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 function routeFor(d) {
     if (d.meta?.route) return d.meta.route
@@ -293,11 +293,11 @@ import AppEditor from './App.editor.jsx'
 
 const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
 
-// One client. initialUrl pulls the static snapshot the data plugin
+// One client. data.catalog pulls the static snapshot the data plugin
 // writes (out/data/sitemap.json) on first paint, then live SSE keeps
 // it current.
 const documents = createClient({ baseUrl: MIKSER_URL })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>
@@ -324,7 +324,7 @@ import { mapRoute } from './route-mapping.jsx'
  */
 export default function AppEditor() {
     // Reads the default client from MikserProvider — configured in
-    // main.editor.jsx with initialUrl pointing at the static snapshot.
+    // main.editor.jsx with data.catalog pointing at the static snapshot.
     const routes = useMikserRoutes({ mapRoute })
     const element = useRoutes(routes)
 

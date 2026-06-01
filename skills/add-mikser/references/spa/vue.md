@@ -261,12 +261,12 @@ import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 
-// One client. `initialUrl` points at the static snapshot the data
+// One client. `data.catalog` points at the static snapshot the data
 // plugin writes (out/data/sitemap.json) — fast first paint from a
 // CDN-cacheable file, then live SSE keeps the route table current.
 // No second API endpoint to configure.
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 const app = createApp(App)
 app.use(createMikserPlugin({ client: documents }))
@@ -303,7 +303,7 @@ import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 const documents = createClient({ baseUrl: mikserUrl })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 
 const app = createApp(App)
 app.use(createMikserPlugin({ client: documents }))
@@ -316,7 +316,7 @@ app.provide('mikserUrl', mikserUrl)
 app.mount('#app')
 ```
 
-**Say (both variants):** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. No second API endpoint, no `useMikserRoutes({ client })` plumbing. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
+**Say (both variants):** "One client. `data: { catalog: 'sitemap' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. No second API endpoint, no `useMikserRoutes({ client })` plumbing. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
@@ -421,7 +421,7 @@ The diff from Mode 1 is small but every layer changes:
 | File | Mode 1 | Mode 2 |
 |---|---|---|
 | `mikser.config.js` | `data.catalog.sitemap` block present | Remove `data.catalog.sitemap` — no snapshot needed |
-| `src/main.js` | `entities('public', { initialUrl: '/data/sitemap.json' })`, `useMikserRoutes(router, { mapRoute })`, `await seeded` | Plain `entities('public')`, no `useMikserRoutes`, no `seeded` |
+| `src/main.js` | `entities('public', { data: { catalog: 'sitemap' } })`, `useMikserRoutes(router, { mapRoute })`, `await seeded` | Plain `entities('public')`, no `useMikserRoutes`, no `seeded` |
 | Router | Hand-coded routes + `useMikserRoutes` populates the rest | Hand-coded routes + **one catch-all** `path: '/:pathMatch(.*)*'` |
 | `src/route-mapping.js` | `mapRoute(document)` → route object | Not needed — dispatch happens inside the catch-all view via `useDocumentByRoute` |
 | Per-document view | `useDocument(() => props.entityId)` | Same — the catch-all view fetches via `useDocumentByRoute`, then per-doc views still use `useDocument` for live updates by id |
@@ -437,7 +437,7 @@ import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
 
-// No initialUrl — no snapshot. Cold routes are resolved per-navigation
+// No data.catalog — no snapshot. Cold routes are resolved per-navigation
 // via the per-query disk cache (cache: true on the public endpoint).
 const documents = createClient({ baseUrl: mikserUrl })
     .entities('public')

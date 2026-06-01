@@ -38,7 +38,7 @@ The mechanism is identical across all three: `mikser-content`'s `api` plugin exp
 
 **Outage resilience — two mechanisms, one story.** Two different parts of the stack survive a brief mikser outage:
 
-1. **First-paint routing** — the `data` plugin's `catalog` config writes a static `out/data/sitemap.json` snapshot at finalize. The SDK loads it via `entities('public', { initialUrl: '/data/sitemap.json' })`. One CDN-cacheable file, no API roundtrip; whatever is fronting your static assets keeps serving it during an outage.
+1. **First-paint routing** — the `data` plugin's `catalog` config writes a static `out/data/sitemap.json` snapshot at finalize. The SDK loads it via `entities('public', { data: { catalog: 'sitemap' } })`. One CDN-cacheable file, no API roundtrip; whatever is fronting your static assets keeps serving it during an outage.
 2. **Live per-id reads** — the api plugin's `cache: true` option (mikser-io ^6.25.1) writes every GET `/entities?...` response to disk, keyed by the request URL's raw query string. Calls like `useDocument(id)` survive an outage out of the proxy's cached responses.
 
 | Surface                              | Source                                      | What survives an outage                          |

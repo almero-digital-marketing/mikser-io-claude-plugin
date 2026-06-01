@@ -286,7 +286,7 @@ export default {
             // the router needs (`pick`). Served by mikser's built-in
             // static handler, CDN-cacheable, survives mikser being
             // down. Consumed by the SDK via
-            //   entities('public', { initialUrl: '/data/sitemap.json' })
+            //   entities('public', { data: { catalog: 'sitemap' } })
             // which unwraps the data-plugin envelope automatically.
             sitemap: {
                 query: e =>

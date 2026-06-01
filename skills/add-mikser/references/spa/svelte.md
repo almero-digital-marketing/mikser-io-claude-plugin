@@ -35,16 +35,16 @@ PUBLIC_MIKSER_URL=http://localhost:3001
 import { createClient } from 'mikser-io-sdk-api'
 import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-// `initialUrl` points at the static snapshot the data plugin writes
+// `data.catalog` points at the static snapshot the data plugin writes
 // (out/data/sitemap.json). The SDK loads it on first paint — fast,
 // CDN-cacheable, no API roundtrip — then opens a live SSE subscribe
 // on the same /public endpoint for incremental updates. No second
 // API endpoint, no second cache file.
 export const documents = createClient({ baseUrl: PUBLIC_MIKSER_URL })
-    .entities('public', { initialUrl: '/data/sitemap.json' })
+    .entities('public', { data: { catalog: 'sitemap' } })
 ```
 
-**Say:** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps it current. Connection config (auth headers, fetch override) lives once on the client."
+**Say:** "One client. `data: { catalog: 'sitemap' }` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps it current. Connection config (auth headers, fetch override) lives once on the client."
 
 ### 3. `src/routes/+layout.svelte` — register the client + connection guard
 
@@ -149,7 +149,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
     // path ("/about/" stripped to "/about").
     const route = $derived('/' + (page.params.slug ?? ''))
 
-    // Look up the route in the catalog. With `initialUrl` set on the
+    // Look up the route in the catalog. With `data.catalog` set on the
     // client in $lib/mikser.js, the first list() consults the static
     // /data/sitemap.json snapshot before falling back to a fresh API
     // call — so the first paint matches by route without an API trip.
@@ -200,7 +200,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 </style>
 ```
 
-**Say:** "Two-step lookup: query the catalog for `meta.route` OR a matching `destination`, then fetch the full document by id. The first paint uses the static `/data/sitemap.json` snapshot the SDK loaded from `initialUrl`, so there's no API roundtrip before the route matches. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
+**Say:** "Two-step lookup: query the catalog for `meta.route` OR a matching `destination`, then fetch the full document by id. The first paint uses the static `/data/sitemap.json` snapshot the SDK loaded from `data.catalog`, so there's no API roundtrip before the route matches. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
 
 ### 7. `src/routes/[...slug]/+page.server.js` — prerender entries (optional)
 
@@ -214,7 +214,7 @@ import { documents } from '$lib/mikser.js'
 
 // `entries()` tells SvelteKit which parameter values exist for this
 // dynamic route. generateMikserRoutes calls listAll(), which consults
-// the `initialUrl` snapshot ($lib/mikser.js → /data/sitemap.json)
+// the `data.catalog` snapshot ($lib/mikser.js → /data/sitemap.json)
 // before falling back to a fresh API call. Same fallback logic as the
 // catch-all: meta.route → destination.
 export const entries = async () => {
@@ -344,7 +344,7 @@ It's worth telling the user up front:
 
 ## Mode 2: Dynamic routes — when the catalog is big
 
-Everything above is **Mode 1**: the catch-all `[...slug]/+page.svelte` does a list-then-fetch lookup against the catalog, and `initialUrl` on the SDK client fills the snapshot for fast first paint. Works perfectly up to ~5–10k routes.
+Everything above is **Mode 1**: the catch-all `[...slug]/+page.svelte` does a list-then-fetch lookup against the catalog, and `data.catalog` on the SDK client fills the snapshot for fast first paint. Works perfectly up to ~5–10k routes.
 
 **Switch to Mode 2** when:
 - The user says the catalog is large (e.g. "a docs site with ~20k pages").
@@ -355,7 +355,7 @@ The diff is two files:
 
 ### `src/lib/mikser.js` (Mode 2)
 
-Drop `initialUrl`. The snapshot is no longer the right tool; routes resolve per-navigation via the per-query disk cache.
+Drop `data.catalog`. The snapshot is no longer the right tool; routes resolve per-navigation via the per-query disk cache.
 
 ```js
 import { createClient } from 'mikser-io-sdk-api'
@@ -399,7 +399,7 @@ Replace the inline two-step lookup with `useDocumentByRoute`:
 
 - `useDocuments` two-step lookup in the catch-all — replaced by `useDocumentByRoute`
 - The `data.catalog.sitemap` block in `mikser.config.js` — no snapshot needed
-- `initialUrl` on the client — no snapshot to consume
+- `data.catalog` on the client — no snapshot to consume
 
 Schemas, plugin-schemas wiring, markdown rendering, root layout connection guard — all unchanged.
 
