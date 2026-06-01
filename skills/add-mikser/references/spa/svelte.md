@@ -26,31 +26,25 @@ PUBLIC_MIKSER_URL=http://localhost:3001
 
 **Say:** "SvelteKit exposes `PUBLIC_*` env vars to the browser via `$env/static/public`. Change for staging/prod."
 
-### 2. `src/lib/mikser.js` — two clients (documents + sitemap)
+### 2. `src/lib/mikser.js` — one client with the snapshot URL
 
 ```js
-// Two clients, one root. Exported so both client-side runes (via the
+// One client. Exported so both client-side runes (via the
 // +layout.svelte registration step) and build-time hooks (entries()
-// in +page.server.js) can use them.
+// in +page.server.js) can use it.
 import { createClient } from 'mikser-io-sdk-api'
 import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-const root = createClient({ baseUrl: PUBLIC_MIKSER_URL })
-
-// Full content fetch — used by useDocument inside views. The /api/public
-// endpoint serves complete documents including the markdown body.
-export const documents = root.entities('public')
-
-// Narrow router data — used by the catch-all to find the document for
-// the current URL. With mikser-io ^6.25.0's sitemap endpoint set to
-// `cache: true`, the api plugin writes every GET /entities response
-// to disk; sdk-api ^2.4.2's list() uses GET so the cache fills from
-// real SDK traffic. A reverse proxy can fail over to the cached file
-// when mikser is down — same URL, transparent to the SDK.
-export const sitemap = root.entities('sitemap')
+// `initialUrl` points at the static snapshot the data plugin writes
+// (out/data/sitemap.json). The SDK loads it on first paint — fast,
+// CDN-cacheable, no API roundtrip — then opens a live SSE subscribe
+// on the same /public endpoint for incremental updates. No second
+// API endpoint, no second cache file.
+export const documents = createClient({ baseUrl: PUBLIC_MIKSER_URL })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 ```
 
-**Say:** "Two clients, one root. `documents` is the full-content client (used by `useDocument` for view bodies). `sitemap` is the narrow router client — small payload. With the sitemap endpoint set to `cache: true` server-side, every GET response is written to disk; a reverse proxy can fall back to the cached file when mikser is down, transparent to the SDK. Both clients share the same root, so connection config (auth headers, fetch override, etc.) is set once."
+**Say:** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps it current. Connection config (auth headers, fetch override) lives once on the client."
 
 ### 3. `src/routes/+layout.svelte` — register the client + connection guard
 
@@ -66,10 +60,8 @@ If the file doesn't exist, create it:
     import { setMikserClient, useMikserStatus } from 'mikser-io-sdk-svelte'
     import { PUBLIC_MIKSER_URL } from '$env/static/public'
 
-    // Register the documents client in component context. Every rune
-    // below this layout (useDocument, useDocuments) resolves it from
-    // here. The sitemap client is used directly by the catch-all
-    // route's load — it doesn't need to be in context.
+    // Register the client in component context. Every rune below this
+    // layout (useDocument, useDocuments) resolves it from here.
     setMikserClient(documents)
 
     // useMikserStatus probes the backend once and returns a reactive
@@ -147,8 +139,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 ```svelte
 <script>
     import { page } from '$app/state'
-    import { useDocuments } from 'mikser-io-sdk-svelte'
-    import { sitemap } from '$lib/mikser.js'
+    import { useDocuments, useDocument } from 'mikser-io-sdk-svelte'
     import PageView from '$lib/views/PageView.svelte'
     import ArticleView from '$lib/views/ArticleView.svelte'
     import NotFound from '$lib/views/NotFound.svelte'
@@ -158,28 +149,23 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
     // path ("/about/" stripped to "/about").
     const route = $derived('/' + (page.params.slug ?? ''))
 
-    // Query the sitemap (narrow, cached) — not public. We're matching
-    // by meta.route OR destination, so the catch-all works for docs
-    // that don't set meta.route explicitly. The explicit { client }
-    // option points useDocuments at the sitemap client; without it,
-    // the rune would inject the documents client from layout context.
-    const list = useDocuments(
-        () => ({
-            filter: {
-                $or: [
-                    { 'meta.route': route },
-                    { destination: { $regex: `^${route.replace(/\/$/, '')}(/index)?\\.html?$` } },
-                ],
-                'meta.published': true,
-            },
-        }),
-        { client: sitemap },
-    )
+    // Look up the route in the catalog. With `initialUrl` set on the
+    // client in $lib/mikser.js, the first list() consults the static
+    // /data/sitemap.json snapshot before falling back to a fresh API
+    // call — so the first paint matches by route without an API trip.
+    // A narrow `fields` projection keeps the response small.
+    const list = useDocuments(() => ({
+        filter: {
+            $or: [
+                { 'meta.route': route },
+                { destination: { $regex: `^${route.replace(/\/$/, '')}(/index)?\\.html?$` } },
+            ],
+            'meta.published': true,
+        },
+        fields: ['id', 'destination', 'meta.route', 'meta.component'],
+    }))
 
-    // Got the sitemap entry — now fetch the full document by id from
-    // the public endpoint via useDocument (which uses the documents
-    // client registered in the root layout context).
-    import { useDocument } from 'mikser-io-sdk-svelte'
+    // Got the sitemap entry — now fetch the full document by id.
     const entityId = $derived(list.documents[0]?.id ?? null)
     const doc = useDocument(() => entityId)
 
@@ -214,7 +200,7 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 </style>
 ```
 
-**Say:** "Two-step lookup: query the sitemap for `meta.route` OR a matching `destination`, then fetch the full document from public by id. With server-side `cache: true` and a reverse proxy in front, the SDK's GET to the sitemap reads live mikser when up and the cached file when down — transparent failover. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
+**Say:** "Two-step lookup: query the catalog for `meta.route` OR a matching `destination`, then fetch the full document by id. The first paint uses the static `/data/sitemap.json` snapshot the SDK loaded from `initialUrl`, so there's no API roundtrip before the route matches. Dispatch is on `meta.component`. Adding a new component = one entry in `viewForComponent` + one schema file."
 
 ### 7. `src/routes/[...slug]/+page.server.js` — prerender entries (optional)
 
@@ -224,15 +210,16 @@ The directory `[...slug]` is SvelteKit's rest-segment syntax — it matches any 
 
 ```js
 import { generateMikserRoutes } from 'mikser-io-sdk-svelte'
-import { sitemap } from '$lib/mikser.js'
+import { documents } from '$lib/mikser.js'
 
 // `entries()` tells SvelteKit which parameter values exist for this
-// dynamic route. Use the sitemap client — it's filtered to documents
-// with meta.component (i.e. things the SPA actually routes). Same
-// fallback logic as the catch-all: meta.route → destination.
+// dynamic route. generateMikserRoutes calls listAll(), which consults
+// the `initialUrl` snapshot ($lib/mikser.js → /data/sitemap.json)
+// before falling back to a fresh API call. Same fallback logic as the
+// catch-all: meta.route → destination.
 export const entries = async () => {
     return generateMikserRoutes({
-        client: sitemap,
+        client: documents,
         mapRoute: document => {
             const path = document.meta?.route ?? (
                 document.destination

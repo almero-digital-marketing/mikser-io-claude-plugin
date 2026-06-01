@@ -87,22 +87,16 @@ const url = (
     typeof import.meta !== 'undefined' && import.meta.env?.PUBLIC_MIKSER_URL
 ) || 'http://localhost:3001'
 
-const root = createClient({ baseUrl: url })
-
-// Full document fetch — used by the catch-all's load() during prerender
-// and by useDocument inside the admin SPA.
-export const documents = root.entities('public')
-
-// Narrow router data — used by entries() during prerender and by the
-// admin SPA's document list. mikser-io ^6.25.0 + sitemap endpoint
-// cache: true means every GET /entities response is written to disk
-// as a side effect; sdk-api ^2.4.2's list() uses GET so the cache fills
-// from real traffic. A reverse proxy serves the cached file when
-// mikser is down — transparent to the SDK.
-export const sitemap = root.entities('sitemap')
+// One client. `initialUrl` points at the static snapshot the data
+// plugin writes (out/data/sitemap.json) — the SDK loads it on first
+// paint and `listAll()` during prerender consults it before falling
+// back to a fresh list() call. The admin SPA's live SSE subscribe
+// runs on the same /public endpoint.
+export const documents = createClient({ baseUrl: url })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 ```
 
-**Say:** "Two clients, shared between contexts. `documents` is the full-content client (catch-all's `load()`, admin's `useDocument`). `sitemap` is the narrow router client — small payload. With server-side `cache: true` and a reverse proxy in front, the admin SPA's list calls fail over to disk-cached responses when mikser is down. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
+**Say:** "One client, shared between contexts. The catch-all's `load()` and admin's `useDocument` both read it; the prerender `entries()` and admin's document list both list against it. `initialUrl` pulls the static snapshot the data plugin wrote, so first paint and prerender enumeration are both fast and CDN-cacheable. The `||` chain picks `MIKSER_URL` in Node (prerender) and `PUBLIC_MIKSER_URL` in the browser (admin)."
 
 ### 5. `src/lib/route-mapping.js` — shared view dispatch
 
@@ -167,17 +161,19 @@ export function routeFor(document) {
 // know which paths to prerender, then calls load() for each — both
 // run against the mikser catalog.
 import { generateMikserRoutes } from 'mikser-io-sdk-svelte'
-import { documents, sitemap } from '$lib/mikser.js'
+import { documents } from '$lib/mikser.js'
 import { routeFor } from '$lib/route-mapping.js'
 
 export const prerender = true
 
-// Enumerate every published, component-having document. entries() runs
-// against the sitemap endpoint — small payload, no full document
-// bodies pulled into the build process.
+// Enumerate every published, component-having document.
+// generateMikserRoutes calls listAll(), which consults the
+// `initialUrl` snapshot ($lib/mikser.js → /data/sitemap.json) before
+// falling back to a fresh list() — so the build doesn't drag markdown
+// bodies through.
 export async function entries() {
     const routes = await generateMikserRoutes({
-        client: sitemap,
+        client: documents,
         mapRoute: document => {
             const path = routeFor(document)
             return path ? { path: path.replace(/^\//, '') } : null
@@ -252,29 +248,22 @@ export const ssr = false
 ```svelte
 <script>
     import { setMikserClient, useDocuments, useDocument } from 'mikser-io-sdk-svelte'
-    import { documents, sitemap } from '$lib/mikser.js'
+    import { documents } from '$lib/mikser.js'
     import { viewForComponent, routeFor } from '$lib/route-mapping.js'
 
-    // Register the documents client for useDocument below. The sitemap
-    // client is passed explicitly to useDocuments for the list — we
-    // don't need it in context.
+    // One client. initialUrl in $lib/mikser.js points it at the static
+    // data-plugin snapshot, so the list below fills from disk on first
+    // paint without an API roundtrip; live SSE keeps it current.
     setMikserClient(documents)
 
     let selectedId = $state(null)
 
-    // List from the sitemap (narrow payload, static-snapshot fast path).
-    // useDocuments gets { client: sitemap } so it doesn't inject the
-    // documents client from context.
-    const all = useDocuments(
-        () => ({
-            filter: { 'meta.published': true, 'meta.component': { $exists: true } },
-            sort: { 'meta.route': 1 },
-            fields: ['id', 'destination', 'meta'],
-        }),
-        { client: sitemap },
-    )
+    const all = useDocuments(() => ({
+        filter: { 'meta.published': true, 'meta.component': { $exists: true } },
+        sort:   { 'meta.route': 1 },
+        fields: ['id', 'destination', 'meta'],
+    }))
 
-    // Full document fetch (uses the documents client from context).
     const selected = useDocument(() => selectedId)
 
     const View = $derived(

@@ -238,6 +238,8 @@ Notes on the choices:
 //   yaml           — load .yml files (if you add any)
 //   plugin-schemas — validate front-matter against schemas/<name>.js
 //   data           — write JSON snapshots of the catalog at finalize
+//                    (used here for /data/sitemap.json — fast first
+//                    paint for the SPA router)
 //   api            — expose the catalog over HTTP with an SSE subscribe stream
 //
 // Note: there's intentionally no render-markdown plugin here. The api
@@ -253,6 +255,7 @@ export default {
         'front-matter',
         'yaml',
         'plugin-schemas',
+        'data',
         'api',
     ],
 
@@ -270,51 +273,40 @@ export default {
         layoutKey: 'meta.component',
     },
 
-    api: {
-        endpoints: {
-            // Full-document read endpoint with SSE subscribe. Views
-            // fetch individual documents from here via useDocument(id).
-            // Returns the whole entity (no projection). `cache: true`
-            // is for fail-safety: when mikser is down, a reverse proxy
-            // serves the cached per-id responses so a user reading a
-            // document keeps reading it. Caveat: broad list calls
-            // (no filter) would dump the whole catalog into a single
-            // cache file — use the sitemap endpoint below for routing-
-            // shaped queries.
-            public: {
-                query: e => e.type === 'document' && e.meta?.published,
-                operations: ['list', 'subscribe'],
-                cache: true,
-            },
-            // Sitemap — the router's source of truth. Narrow filter
-            // (only documents with meta.component) plus an explicit
-            // `fields` projection keeps the response tiny: one entry
-            // per route with just the data the SPA needs to dispatch.
-            //
-            // This is the load-time fix. Without it the SPA would
-            // boot by fetching the whole public catalog (every
-            // markdown body, every meta field) to build a route
-            // table — easily megabytes on a real site. With it,
-            // first paint is one small JSON file.
-            //
-            // `cache: true` (mikser-io ^6.25.1+) writes every GET
-            // response to disk. A reverse proxy fails over to the
-            // cached file when mikser is down — same URL, transparent
-            // to the SDK. See plugins.md "Per-query disk cache" for
-            // the nginx config.
+    data: {
+        // The data plugin writes JSON snapshots at finalize. We use it
+        // to publish a single sitemap.json file the SPA loads on first
+        // paint — no second API endpoint, no SSE channel needed for
+        // routing data.
+        catalog: {
+            // out/data/sitemap.json — every published document that
+            // declares a meta.component, projected to just the fields
+            // the router needs (`pick`). Served by mikser's built-in
+            // static handler, CDN-cacheable, survives mikser being
+            // down. Consumed by the SDK via
+            //   entities('public', { initialUrl: '/data/sitemap.json' })
+            // which unwraps the data-plugin envelope automatically.
             sitemap: {
                 query: e =>
                     e.type === 'document' &&
                     e.meta?.published &&
                     e.meta?.component,
+                pick: ['id', 'destination', 'meta'],
+            },
+        },
+    },
+
+    api: {
+        endpoints: {
+            // Single full-document endpoint with SSE subscribe. Views
+            // fetch individual documents from here via useDocument(id).
+            // `cache: true` is for fail-safety: when mikser is down a
+            // reverse proxy serves the cached per-id responses so a
+            // reader keeps reading. Routing data comes from the static
+            // sitemap.json above, not from this endpoint.
+            public: {
+                query: e => e.type === 'document' && e.meta?.published,
                 operations: ['list', 'subscribe'],
-                fields: [
-                    'id',
-                    'destination',
-                    'meta.route',
-                    'meta.component',
-                    'meta.title',
-                ],
                 cache: true,
             },
         },

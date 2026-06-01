@@ -227,7 +227,7 @@ The pattern: render React immediately, mount `MikserProvider` so hooks have a cl
 
 Preserve the scaffolder's `import './index.css'` — the Vite React template ships a small stylesheet that's still useful even after you replace `App.jsx`.
 
-Two clients now: `documents` (public endpoint, used by `useDocument` inside views) and `sitemap` (narrow endpoint with `cache: true` on the server side — every GET response written to disk so a reverse proxy can fail over to the cache when mikser is down). The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it.
+One client. `initialUrl` points at the static snapshot the `data` plugin writes (`out/data/sitemap.json`) — the SDK loads it on first paint (CDN-cacheable, no API roundtrip), then opens a live SSE subscribe on the same `/public` endpoint for incremental updates.
 
 #### Variant A — user has no existing router
 
@@ -241,15 +241,14 @@ import './index.css'
 import App from './App.jsx'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const root = createClient({ baseUrl: mikserUrl })
-const documents = root.entities('public')
-const sitemap = root.entities('sitemap')
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <MikserProvider client={documents}>
             <BrowserRouter>
-                <App mikserUrl={mikserUrl} sitemap={sitemap} />
+                <App mikserUrl={mikserUrl} />
             </BrowserRouter>
         </MikserProvider>
     </React.StrictMode>,
@@ -267,20 +266,19 @@ import './index.css'
 import App from './App.jsx'  // their existing tree, with its router inside
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const root = createClient({ baseUrl: mikserUrl })
-const documents = root.entities('public')
-const sitemap = root.entities('sitemap')
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <MikserProvider client={documents}>
-            <App mikserUrl={mikserUrl} sitemap={sitemap} />
+            <App mikserUrl={mikserUrl} />
         </MikserProvider>
     </React.StrictMode>,
 )
 ```
 
-**Say (both variants):** "Two clients now: `documents` (public endpoint, full content fetch — used by `useDocument` inside views) and `sitemap` (narrow endpoint with server-side `cache: true` — every GET response written to disk so a reverse proxy can fail over to the cache when mikser is down). `MikserProvider` registers documents for hooks beneath. The sitemap client is passed as a prop into App, where `useMikserRoutes` consumes it. The sitemap's `meta.component` filter is the load-bearing convention: only documents with a component end up as routes."
+**Say (both variants):** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. `MikserProvider` registers it for every hook in the tree, including `useMikserRoutes`. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
 
 ### 10. `src/App.jsx`
 
@@ -298,21 +296,20 @@ import { useMikserRoutes, useMikserStatus } from 'mikser-io-sdk-react'
 import { mapRoute } from './route-mapping.jsx'
 import NotFound from './views/NotFound.jsx'
 
-export default function App({ mikserUrl, sitemap }) {
+export default function App({ mikserUrl }) {
     // useMikserStatus probes the backend once via client.list({ limit: 1 })
     // and returns 'connecting' | 'ready' | 'unreachable'. Settles to one
     // of the terminal states within ~1s on success or 5s on failure.
     // Override timeoutMs if 5s isn't right for your network.
     const status = useMikserStatus()
 
-    // useMikserRoutes subscribes against the sitemap client (passed in
-    // from main.jsx). Once SSE delivers the first batch, the route
-    // table populates and the matched view renders. When a reverse
-    // proxy fronts mikser, the sitemap endpoint's disk cache survives
-    // backend outages — the SDK's GET-form list() reads cached data
-    // and the SPA keeps rendering routes even if mikser is down.
+    // useMikserRoutes reads the default client from MikserProvider —
+    // the one configured with initialUrl in main.jsx. First paint loads
+    // from the static /data/sitemap.json snapshot; SSE deltas keep the
+    // route table current. When the snapshot is served by a CDN or a
+    // reverse proxy in front of mikser, route enumeration survives
+    // backend outages on first load.
     const routes = useMikserRoutes({
-        client: sitemap,
         mapRoute,
         staticRoutes: [
             // { path: '/login', element: <Login /> },

@@ -133,9 +133,12 @@ import { generateMikserRoutes } from 'mikser-io-sdk-react'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIKSER_URL = process.env.MIKSER_URL || 'http://localhost:3001'
 
-// Build-time uses the sitemap endpoint — narrow query (meta.component
-// only), small payload, lined up with the runtime's sitemap.json snapshot.
-const client = createClient({ baseUrl: MIKSER_URL }).entities('sitemap')
+// Build-time uses the same single client as the runtime editor.
+// `initialUrl` points at the static snapshot the data plugin writes
+// (out/data/sitemap.json) — generateMikserRoutes consults it before
+// falling back to a fresh list() call.
+const client = createClient({ baseUrl: MIKSER_URL })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 function routeFor(d) {
     if (d.meta?.route) return d.meta.route
@@ -169,7 +172,7 @@ writeFileSync(
 console.log(`Generated ${routes.length} routes → src/generated/routes.json`)
 ```
 
-**Say:** "Runs in Node before Vite. Asks mikser \"what routes exist?\" via the sitemap endpoint — small payload, only documents with `meta.component`. Writes a JSON manifest the public entry reads — no React elements in the JSON, because functions don't serialize; just `{ path, component, id, title }`. The runtime maps `component` back to the view via the shared `route-mapping.jsx`. Note the path fallback: prefer `meta.route` but fall back to `destination` so a markdown file can live without an explicit route in its frontmatter."
+**Say:** "Runs in Node before Vite. `generateMikserRoutes` calls `listAll()` on the client — which consults the static `/data/sitemap.json` snapshot the data plugin wrote, falling back to a fresh list() if it's missing. Writes a JSON manifest the public entry reads — no React elements in the JSON, because functions don't serialize; just `{ path, component, id, title }`. The runtime maps `component` back to the view via the shared `route-mapping.jsx`. Note the path fallback: prefer `meta.route` but fall back to `destination` so a markdown file can live without an explicit route in its frontmatter."
 
 ### 9. `src/route-mapping.jsx` — shared
 
@@ -289,15 +292,18 @@ import { MikserProvider } from 'mikser-io-sdk-react'
 import AppEditor from './App.editor.jsx'
 
 const MIKSER_URL = import.meta.env.VITE_MIKSER_URL || 'http://localhost:3001'
-const root = createClient({ baseUrl: MIKSER_URL })
-const documents = root.entities('public')
-const sitemap = root.entities('sitemap')
+
+// One client. initialUrl pulls the static snapshot the data plugin
+// writes (out/data/sitemap.json) on first paint, then live SSE keeps
+// it current.
+const documents = createClient({ baseUrl: MIKSER_URL })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 createRoot(document.getElementById('app')).render(
     <React.StrictMode>
         <MikserProvider client={documents}>
             <BrowserRouter>
-                <AppEditor sitemap={sitemap} />
+                <AppEditor />
             </BrowserRouter>
         </MikserProvider>
     </React.StrictMode>,
@@ -316,8 +322,10 @@ import { mapRoute } from './route-mapping.jsx'
  * useMikserRoutes — adding or editing content shows up instantly while
  * editing. Same views the static build uses, resolved at runtime.
  */
-export default function AppEditor({ sitemap }) {
-    const routes = useMikserRoutes({ client: sitemap, mapRoute })
+export default function AppEditor() {
+    // Reads the default client from MikserProvider — configured in
+    // main.editor.jsx with initialUrl pointing at the static snapshot.
+    const routes = useMikserRoutes({ mapRoute })
     const element = useRoutes(routes)
 
     return (

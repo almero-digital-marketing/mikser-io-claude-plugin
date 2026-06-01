@@ -260,17 +260,13 @@ import NotFound from './views/NotFound.vue'
 import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const root = createClient({ baseUrl: mikserUrl })
 
-// Two clients, two purposes:
-//   - documents  → full content fetch from the `public` endpoint
-//                  (used by useDocument inside views)
-//   - sitemap    → narrow router data from the `sitemap` endpoint.
-//                  Server-side `cache: true` writes every GET response
-//                  to disk; a reverse proxy can fail over to the cache
-//                  when mikser is down — transparent to the SDK.
-const documents = root.entities('public')
-const sitemap = root.entities('sitemap')
+// One client. `initialUrl` points at the static snapshot the data
+// plugin writes (out/data/sitemap.json) — fast first paint from a
+// CDN-cacheable file, then live SSE keeps the route table current.
+// No second API endpoint to configure.
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 const app = createApp(App)
 app.use(createMikserPlugin({ client: documents }))
@@ -283,11 +279,9 @@ const router = createRouter({
 })
 app.use(router)
 
-// Hand the sitemap client to useMikserRoutes. The SDK's list() uses
-// GET so the response is whatever the proxy serves (live mikser when
-// up, cached file when down); routes populate on first response and
-// stay in sync via SSE on the sitemap endpoint.
-const { seeded } = useMikserRoutes(router, { client: sitemap, mapRoute })
+// useMikserRoutes reads the default client. First paint loads from
+// the static snapshot; SSE deltas keep it current.
+const { seeded } = useMikserRoutes(router, { mapRoute })
 
 // Re-resolve the current URL after the SDK has populated routes, so
 // the just-added route renders without flicker.
@@ -308,22 +302,21 @@ import { router } from './router.js'  // their existing router
 import App from './App.vue'
 
 const mikserUrl = import.meta.env.VITE_MIKSER_URL
-const root = createClient({ baseUrl: mikserUrl })
-const documents = root.entities('public')
-const sitemap = root.entities('sitemap')
+const documents = createClient({ baseUrl: mikserUrl })
+    .entities('public', { initialUrl: '/data/sitemap.json' })
 
 const app = createApp(App)
 app.use(createMikserPlugin({ client: documents }))
 app.use(router)
 
-const { seeded } = useMikserRoutes(router, { client: sitemap, mapRoute })
+const { seeded } = useMikserRoutes(router, { mapRoute })
 seeded.then(() => router.replace(router.currentRoute.value.fullPath))
 
 app.provide('mikserUrl', mikserUrl)
 app.mount('#app')
 ```
 
-**Say (both variants):** "Two clients now: `documents` (public endpoint, full content for `useDocument`) and `sitemap` (narrow endpoint, `cache: true` server-side so a reverse proxy can fail over to the cached file when mikser is down). `createMikserPlugin({ client: documents })` registers the document client for composables. `useMikserRoutes(router, { client: sitemap, mapRoute })` uses the sitemap client — SDK uses GET so the response comes from live mikser when up, cache when down, transparent. The sitemap's filter (`meta.component`) is the load-bearing convention: only documents with a component end up as routes."
+**Say (both variants):** "One client. `initialUrl: '/data/sitemap.json'` points at the static snapshot the `data` plugin writes — fast first paint from a CDN-cacheable file, then live SSE on the same `/public` endpoint keeps the route table current. No second API endpoint, no `useMikserRoutes({ client })` plumbing. The data plugin's `catalog.sitemap` filter (`meta.component`) is the load-bearing convention: only documents with a component end up in the snapshot, and so only those become routes."
 
 If the user has an existing router but you don't know its filename, ask before importing — don't guess `./router.js`.
 
