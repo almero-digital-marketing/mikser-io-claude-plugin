@@ -264,13 +264,14 @@ export default {
         // failing the build — right for active editing. Flip to 'fail'
         // for CI strictness.
         onError: 'warn',
-        // Match schemas by meta.component rather than meta.layout, so
-        // schemas/page.js validates documents with component: 'page'.
-        // This keeps layout reserved for mikser's SSG render pipeline
-        // (and avoids the "layout 'page' not found" warnings that
-        // mikser otherwise logs when a SPA-only component name has no
-        // matching template file).
-        layoutKey: 'meta.component',
+        // schemaKey: the dotted front-matter path that names the schema
+        // to validate against. Default is 'meta.layout' (right for SSG).
+        // For a SPA — no rendered HTML, no layout in the front-matter —
+        // point it at meta.component instead. Without this, plugin-schemas
+        // would look up `meta.layout`, find nothing, and silently skip
+        // every document (it'd warn at finalize that the schemas loaded
+        // but never matched anything, but validation would still be off).
+        schemaKey: 'meta.component',
     },
 
     data: {
