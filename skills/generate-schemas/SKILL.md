@@ -1,15 +1,15 @@
 ---
 name: generate-schemas
-description: Bootstrap mikser-io-plugin-schemas schemas by analyzing the shape of documents already in the project. Walks documents/, groups by the configured schemaKey, infers per-field Zod types from what's actually in the front-matter, and writes one schemas/<name>.js per group. Use when a project has documents but no schemas yet, when adopting plugin-schemas mid-project, or when adding a new component type and the user wants a starter schema generated from existing examples rather than written from scratch.
+description: Bootstrap mikser-io-schemas schemas by analyzing the shape of documents already in the project. Walks documents/, groups by the configured schemaKey, infers per-field Zod types from what's actually in the front-matter, and writes one schemas/<name>.js per group. Use when a project has documents but no schemas yet, when adopting plugin-schemas mid-project, or when adding a new component type and the user wants a starter schema generated from existing examples rather than written from scratch.
 ---
 
 # generate-schemas
 
-Generate Zod schemas for [mikser-io-plugin-schemas](https://github.com/almero-digital-marketing/mikser-io-plugin-schemas) from the actual shape of documents already in the project. The skill is for **bootstrap**, not ongoing maintenance — after running it, the schemas are normal `.js` files the user owns and edits by hand.
+Generate Zod schemas for [mikser-io-schemas](https://github.com/almero-digital-marketing/mikser-io-schemas) from the actual shape of documents already in the project. The skill is for **bootstrap**, not ongoing maintenance — after running it, the schemas are normal `.js` files the user owns and edits by hand.
 
 ## What this skill does
 
-1. Reads `mikser.config.js` to find the documents folder, the schemas folder, and `schemas.schemaKey`. Falls back to mikser's defaults (`documents/`, `schemas/`) if they're not set; asks for `schemaKey` if it's missing (no default — see `mikser-io-plugin-schemas` 0.4+).
+1. Reads `mikser.config.js` to find the documents folder, the schemas folder, and `schemas.schemaKey`. Falls back to mikser's defaults (`documents/`, `schemas/`) if they're not set; asks for `schemaKey` if it's missing (no default — see `mikser-io-schemas` 0.4+).
 2. Runs `scripts/analyze-documents.mjs` to walk the docs, parse YAML front-matter, group by the `schemaKey` value, and infer per-field types.
 3. Reviews the report with the user, asking about ambiguous cases (mixed types, enum vs free-form string, optional vs always-present).
 4. Writes `<schemasFolder>/<name>.js` files. Asks before overwriting any existing schema.

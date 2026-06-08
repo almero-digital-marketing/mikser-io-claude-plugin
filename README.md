@@ -39,7 +39,7 @@ The mechanism is identical across all three: `mikser-content`'s `api` plugin exp
 **Outage resilience — two mechanisms, one story.** Two different parts of the stack survive a brief mikser outage:
 
 1. **First-paint routing** — the `data` plugin's `catalog` config writes a static `out/data/sitemap.json` snapshot at finalize. The SDK loads it via `entities('public', { data: { catalog: 'sitemap', entities: 'page' } })`. One CDN-cacheable file, no API roundtrip; whatever is fronting your static assets keeps serving it during an outage.
-2. **Live per-id reads** — the api plugin's `cache: true` option (mikser-io ^6.25.1) writes every GET `/entities?...` response to disk, keyed by the request URL's raw query string. Calls like `useDocument(id)` survive an outage out of the proxy's cached responses.
+2. **Live per-id reads** — the api plugin's `cache: true` option writes every GET `/entities?...` response to disk, keyed by a 16-hex sha256 prefix of the query string. The SDK appends `&cache=<hash>` to its URLs automatically so nginx can `try_files .../$arg_cache.json` without Lua. Calls like `useDocument(id)` survive an outage out of the proxy's cached responses.
 
 | Surface                              | Source                                      | What survives an outage                          |
 |---|---|---|
@@ -57,15 +57,18 @@ location /api/public/entities {
 }
 location @cache {
     root /var/www/out;
-    try_files /api/public/entities/$args.json
+    # $arg_cache is the sha256-prefix the SDK appends as &cache=<hash>.
+    # Server strips the same param before computing its own hash, so
+    # both sides agree on the filename without a shared secret.
+    try_files /api/public/entities/$arg_cache.json
               /api/public/entities/index.json
               =502;
 }
 ```
 
-`$args` is whatever query string the client sent — same string mikser used as the cache filename. Path match, no hashing on either side.
+The SDK's `list()` appends `&cache=<sha256-prefix>` to every GET request — both server and client compute the same hash from the same query string, so nginx can serve cache files via `try_files $arg_cache.json` without Lua or rewrite modules. Wrong/missing hash on a request just falls through to mikser; no poisoning is possible because the server is always the source of truth for filename choice.
 
-The SDK (`mikser-io-sdk-api ^2.4.2`) uses GET for `list()` calls so the cache fills from real traffic automatically. On invalidation (any entity change), mikser drops the whole cache directory; subsequent requests re-warm it on demand. See [mikser-io's caching docs](https://github.com/almero-digital-marketing/mikser-io/blob/main/documentation/caching.md) for the full nginx / Caddy / Cloudflare / Apache configs.
+On invalidation (any entity change), mikser drops the whole cache directory; subsequent requests re-warm it on demand. For graph-expanded queries (`expand: [...]`) invalidation is **precise** — only the specific cache files whose expansion touched a mutated entity get evicted, via the engine's `runtime.refs.subscribeGraph`. See [mikser-io's caching docs](https://github.com/almero-digital-marketing/mikser-io/blob/main/documentation/caching.md) for the full nginx / Caddy / Cloudflare / Apache configs.
 
 The SPA's connection guard still triggers if the live backend is unreachable from the browser — but with the cache in place, navigation reads succeed and the guard only surfaces if the user tries to mutate or open SSE.
 

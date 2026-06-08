@@ -218,7 +218,7 @@ out
     },
     "dependencies": {
         "mikser-io": "^6.26.0",
-        "mikser-io-plugin-schemas": "^0.1.0",
+        "mikser-io-schemas": "^0.1.0",
         "zod": "^3.23.0"
     }
 }
